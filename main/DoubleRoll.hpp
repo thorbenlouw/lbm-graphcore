@@ -46,11 +46,11 @@ auto toDstSlices(const std::tuple<size_t, size_t> &dims,
     auto const &[xSlice, ySlice] = sp;
     auto const &[xFrom, xTo] = xSlice;
     auto const &[yFrom, yTo] = ySlice;
-    auto dst_xFrom = (xFrom - roll_x) % lx;
-    auto dst_xTo = (xTo - roll_x) % lx;
+    auto dst_xFrom = (lx + xFrom - roll_x) % lx;
+    auto dst_xTo = (lx + xTo - roll_x) % lx;
     dst_xTo = dst_xTo == 0 ? lx : dst_xTo;
-    auto dst_yFrom = (yFrom - roll_y) % ly;
-    auto dst_yTo = (yTo - roll_y) % ly;
+    auto dst_yFrom = (ly + yFrom - roll_y) % ly;
+    auto dst_yTo = (ly + yTo - roll_y) % ly;
     dst_yTo = dst_yTo == 0 ? ly : dst_yTo;
 
     return {

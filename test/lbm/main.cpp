@@ -290,3 +290,123 @@ TEST(testDoubleRoll_determineSrcAndDstSlices, rollRight) {
             .to({{0, 1},
                  {3, 4}});
 }
+
+
+TEST(testDoubleRoll_determineSrcAndDstSlices, rollLeft) {
+    auto const &[src_slices, dst_slices] = determineSrcAndDstSlices({3, 4}, {1, 0});
+
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Middle)
+            .isCopiedFrom({{1, 2},
+                           {1, 3}})
+            .to({{0, 1},
+                 {1, 3}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Top)
+            .isCopiedFrom({{1, 2},
+                           {0, 1}})
+            .to({{0, 1},
+                 {0, 1}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Left)
+            .isCopiedFrom({{0, 1},
+                           {1, 3}})
+            .to({{2, 3},
+                 {1, 3}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Right)
+            .isCopiedFrom({{2, 3},
+                           {1, 3}})
+            .to({{1, 2},
+                 {1, 3}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Bottom)
+            .isCopiedFrom({{1, 2},
+                           {3, 4}})
+            .to({{0, 1},
+                 {3, 4}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(TopLeft)
+            .isCopiedFrom({{0, 1},
+                           {0, 1}})
+            .to({{2, 3},
+                 {0, 1}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(TopRight)
+            .isCopiedFrom({{2, 3},
+                           {0, 1}})
+            .to({{1, 2},
+                 {0, 1}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(BottomLeft)
+            .isCopiedFrom({{0, 1},
+                           {3, 4}})
+            .to({{2, 3},
+                 {3, 4}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(BottomRight)
+            .isCopiedFrom({{2, 3},
+                           {3, 4}})
+            .to({{1, 2},
+                 {3, 4}});
+}
+
+
+TEST(testDoubleRoll_determineSrcAndDstSlices, rollDownAndLeft) {
+    auto const &[src_slices, dst_slices] = determineSrcAndDstSlices({3, 4}, {1, -1});
+
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Middle)
+            .isCopiedFrom({{1, 2},
+                           {1, 3}})
+            .to({{0, 1},
+                 {2, 4}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Top)
+            .isCopiedFrom({{1, 2},
+                           {0, 1}})
+            .to({{0, 1},
+                 {1, 2}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Left)
+            .isCopiedFrom({{0, 1},
+                           {1, 3}})
+            .to({{2, 3},
+                 {2, 4}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Right)
+            .isCopiedFrom({{2, 3},
+                           {1, 3}})
+            .to({{1, 2},
+                 {2, 4}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(Bottom)
+            .isCopiedFrom({{1, 2},
+                           {3, 4}})
+            .to({{0, 1},
+                 {0, 1}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(TopLeft)
+            .isCopiedFrom({{0, 1},
+                           {0, 1}})
+            .to({{2, 3},
+                 {1, 2}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(TopRight)
+            .isCopiedFrom({{2, 3},
+                           {0, 1}})
+            .to({{1, 2},
+                 {1, 2}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(BottomLeft)
+            .isCopiedFrom({{0, 1},
+                           {3, 4}})
+            .to({{2, 3},
+                 {0, 1}});
+    assertUsing(src_slices, dst_slices)
+            .thatRegion(BottomRight)
+            .isCopiedFrom({{2, 3},
+                           {3, 4}})
+            .to({{1, 2},
+                 {0, 1}});
+}
