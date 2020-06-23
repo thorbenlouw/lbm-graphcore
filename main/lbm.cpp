@@ -21,20 +21,21 @@
 #include <math.h>
 #include <chrono>
 #include <algorithm>
+#include <poputil/Broadcast.hpp>
 
 using namespace poplar;
 using namespace poplar::program;
 using namespace popops;
 
-// const auto POPLAR_ENGINE_OPTIONS = OptionFlags{
-//     {"target.saveArchive", "archive.a"},
-//     {"debug.instrument", "true"},
-//     {"debug.instrumentCompute", "true"},
-//     {"debug.loweredVarDumpFile", "vars.capnp"},
-//     {"debug.instrumentControlFlow", "true"},
-//     {"debug.computeInstrumentationLevel", "tile"}};
+const auto POPLAR_ENGINE_OPTIONS = OptionFlags{
+    {"target.saveArchive", "archive.a"},
+    {"debug.instrument", "true"},
+    {"debug.instrumentCompute", "true"},
+    {"debug.loweredVarDumpFile", "vars.capnp"},
+    {"debug.instrumentControlFlow", "true"},
+    {"debug.computeInstrumentationLevel", "tile"}};
 
-const auto POPLAR_ENGINE_OPTIONS = OptionFlags{};
+// const auto POPLAR_ENGINE_OPTIONS = OptionFlags{};
 
 // %matplotlib inline
 // %config InlineBackend.figure_format='retina'
@@ -57,11 +58,13 @@ auto getIpuModel() -> std::optional<Device> {
 // nulb = uLB * r/ Re # Viscosity in lattice units
 // omega = 1 / (3 * nulb + 0.5) # Relaxation Parameter
 
-struct {
-    const unsigned maxIter = 20 * 1000;
+struct
+{
+    // const unsigned maxIter = 20 * 1000;
+    const unsigned maxIter = 2;
     const float Re = 220.0;     // Reynolds number
-    const unsigned nx = 1024;   // Number of lattice nodes
-    const unsigned ny = 1024;   // Number of lattice nodes
+    const unsigned nx = 128;    // Number of lattice nodes
+    const unsigned ny = 127;    // Number of lattice nodes
     const unsigned ly = ny - 1; //  Height of the domain of the lattice units
     const unsigned cx = nx / 4;
     const unsigned cy = ny / 2;
@@ -84,9 +87,12 @@ struct {
 //         u[1,:,:] += v[i,1] * fin[i,:,:]
 //     u /= rho
 //     return rho, u
-auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors,
-                 const std::vector<std::tuple<int, int>> &v) -> Program {
+auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
+{
+    std::cerr << __FUNCTION__ << std::endl;
+
     Sequence prog;
+
     reduceWithOutput(graph, tensors["fin"], tensors["rho"], {0},
                      {Operation::ADD}, prog, "rho=sum(fin, axis=0)");
     mulInPlace(graph, tensors["u"], tensors["0"], prog);
@@ -110,8 +116,10 @@ auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors,
 //         cu = 3 * (v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])
 //         feq[i,:,:] = rho * t[i] * (1+ cu + 0.5 * cu ** 2 - usqr)
 //     return feq
-auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors,
-                 const std::vector<std::tuple<int, int>> &v) -> Program {
+auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
+{
+    std::cerr << __FUNCTION__ << std::endl;
+
     Sequence prog;
 
     auto usqr = mul(graph,
@@ -186,7 +194,10 @@ auto addScalarContants(Graph &graph, std::map<std::string, Tensor> &tensors, std
     }
 }
 
-auto incrementTimestep(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
+auto incrementTimestep(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
+{
+    std::cerr << __FUNCTION__ << std::endl;
+
     Sequence s;
     popops::addInPlace(graph, tensors["timestep"], tensors["1u"], s, "timestep++");
     return s;
@@ -206,15 +217,14 @@ auto captureProfileInfo(Engine &engine) {
     executionOfs.close();
 }
 
-auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
+auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
+{
+    std::cerr << __FUNCTION__ << std::endl;
+
     //     # Left wall: inflow condition
     //     u[:,0,:] = vel[:,0,:]
     //     rho[0,:] = 1/(1-u[0,0,:]) * (np.sum(fin[col2, 0, :], axis=0) + 2 * np.sum(fin[col3,0,:], axis=0))
     Sequence s;
-    for (const auto &[k, v] : tensors) {
-        std::cout << k << " ";
-    }
-    std::cout << std::endl;
 
     s.add(Copy(tensors["vel"].slice(0, 1, 1), tensors["u"].slice(0, 1, 1), "u[:,0,:] = vel[:,0,:]"));
 
@@ -234,13 +244,16 @@ auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Pr
     return s;
 }
 
-auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors,
-                      const std::vector<std::tuple<int, int>> &v) -> Program {
+auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
+{
+    std::cerr << __FUNCTION__ << std::endl;
+
     //     # Right wall: outflow condition
     //     fin[col3, -1, :] = fin[col3, -2, :]
     //     rho, u = macroscopic(fin)
     Sequence s;
     //col3 is 6,7,8
+
     const auto last_idx = tensors["fin"].dim(1) - 1;
     const auto penultimate_idx = last_idx - 1;
     assert(penultimate_idx > 0);
@@ -257,10 +270,14 @@ auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors,
     // TODO Raise a bug. This works on a smaller tensor?!
 
     s.add(macroscopic(graph, tensors, v));
+
     return s;
 }
 
-auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y) -> Program {
+auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y) -> Program
+{
+    std::cerr << __FUNCTION__ << std::endl;
+
     assert(roll_x > -2 && roll_x < 2);
     assert(roll_y > -2 && roll_y < 2);
 
@@ -268,20 +285,22 @@ auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y
     auto lx = src.dim(0);
     auto ly = src.dim(1);
 
+    std::cerr << "lx " << lx << "ly " << ly << " "<< "rollx " << roll_x << "roll_y " << roll_y << " " << __FUNCTION__ << std::endl;
+
     typedef std::tuple<size_t, size_t> SliceBounds;
     typedef std::tuple<SliceBounds, SliceBounds> SlicePair;
 
     auto src_slices = std::vector<SlicePair>{
-            // x slice, y slice
-            {{1,      lx - 1}, {1,      ly - 1}},   // middle block
-            {{0,      1},      {1,      ly - 1}},        // left col no corners
-            {{lx - 1, lx},     {1,      ly - 1}},  // right col no corners
-            {{1,      lx - 1}, {0,      1}},        // top row no corners
-            {{1,      lx - 1}, {ly - 1, ly}},  // bottom row no corners
-            {{0,      1},      {0,      1}},             // top left cell
-            {{0,      1},      {ly - 1, ly}},       // bottom left cell
-            {{lx - 1, lx},     {0,      1}},       // top right cell
-            {{lx - 1, lx},     {ly - 1, ly}}, // bottom right cell
+        // x slice, y slice
+        {{1, lx - 1}, {1, ly - 1}},   // middle block
+        {{0, 1}, {1, ly - 1}},        // left col no corners
+        {{lx - 1, lx}, {1, ly - 1}},  // right col no corners
+        {{1, lx - 1}, {0, 1}},        // top row no corners <--
+        {{1, lx - 1}, {ly - 1, ly}},  // bottom row no corners
+        {{0, 1}, {0, 1}},             // top left cell
+        {{0, 1}, {ly - 1, ly}},       // bottom left cell
+        {{lx - 1, lx}, {0, 1}},       // top right cell
+        {{lx - 1, lx}, {ly - 1, ly}}, // bottom right cell
     };
 
     auto dst_slices = std::vector<SlicePair>();
@@ -294,12 +313,12 @@ auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y
         dst_xTo = dst_xTo == 0 ? lx : dst_xTo;
         auto dst_yFrom = (yFrom - roll_y) % ly;
         auto dst_yTo = (yTo - roll_y) % ly;
-        dst_yTo = dst_yTo == 0 ? lx : dst_yTo;
+        dst_yTo = dst_yTo == 0 ? ly : dst_yTo;
 
         return {
-                {dst_xFrom, dst_xTo},
-                {dst_yFrom, dst_yTo}};
-    };
+            {dst_xFrom, dst_xTo},
+            {dst_yFrom, dst_yTo}};
+    }; // TODO: This definitely needs unit tests
     std::transform(src_slices.begin(), src_slices.end(), std::back_inserter(dst_slices), toDstSlices);
     for (auto i = 0; i < 9; i++) {
         auto const &[src_xSlice, src_ySlice] = src_slices[i];
@@ -308,14 +327,16 @@ auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y
         auto const &[dst_xSlice, dst_ySlice] = dst_slices[i];
         auto const &[dst_xFrom, dst_xTo] = dst_xSlice;
         auto const &[dst_yFrom, dst_yTo] = dst_ySlice;
-        // std::cout << "src[[" << src_xFrom << ":" << src_xTo << ")..[" << src_yFrom << ":" << src_yTo << ")]" << std::endl;
-        // std::cout << "dst[[" << dst_xFrom << ":" << dst_xTo << ")..[" << dst_yFrom << ":" << dst_yTo << ")]" << std::endl;
-
+        std::cout << "src[[" << src_xFrom << ":" << src_xTo << "),[" << src_yFrom << ":" << src_yTo << ")]" << std::endl;
+        std::cout << "dst[[" << dst_xFrom << ":" << dst_xTo << "),[" << dst_yFrom << ":" << dst_yTo << ")]" << std::endl;
+        std::cerr << "i " << i << " " << src_xFrom << " " << src_xTo << " " << src_yFrom << " " << src_yTo << " " << dst_xFrom << " " << dst_xTo << " " << dst_yFrom << " " << dst_yTo << " " << __LINE__ << std::endl;
+        std::cerr << src.dim(0) << "x" << src.dim(1) << std::endl;
         auto src_slice = src.slice({src_xFrom, src_yFrom}, {src_xTo, src_yTo});
         auto dst_slice = dst.slice({dst_xFrom, dst_yFrom}, {dst_xTo, dst_yTo});
         s.add(Copy(src_slice, dst_slice));
     }
     return s;
+    std::cerr << "done" << __FUNCTION__ << std::endl;
 }
 
 auto
@@ -365,12 +386,17 @@ auto collision(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program 
 Program bounceBack(Graph &graph, std::map<std::string, Tensor> &tensors) {
     //     for i in range(9):
     //         fout[i, obstacle] = fin[8-i, obstacle]
-
-    // TODO? Mask or use select()
     Sequence s;
-    for (auto i = 0u; i < 9; i++) {
-        //fout[i] = (1 - obstacle) * fin[i] + obstacle * fin[8 - i]
-    }
+    // for (auto i = 0u; i < 9; i++)
+    // {
+    //     auto tmp1 = tensors["fout"][i];
+    //     auto tmp2 = tensors["fin"][8 - i];
+    //     popops::select(graph, tmp1, tmp2, tensors["obstacle"], s, "fout[i, obstacle] = fin[8-i, obstacle]");
+    // }
+
+    // actually we can do this in one 3x3 tensor op!
+    poputil::broadcastToMatch(tensors["obstacle"], {9, Constants.nx, Constants.ny}); //TODO: just do this on creation
+    popops::select(graph, tensors["fout"], tensors["fin"].reverse(0), tensors["obstacle"], s, "fout[i, obstacle] = fin[8-i, obstacle]");
     return s;
 }
 
@@ -379,7 +405,8 @@ auto getIpuDevice() -> std::optional<Device> {
 
     // Attempt to connect to a single IPU
     bool success = false;
-    for (auto &d : manager.getDevices(poplar::TargetType::IPU, 4)) {
+    for (auto &d : manager.getDevices(poplar::TargetType::IPU, 1))
+    {
         std::cerr << "Trying to attach to IPU " << d.getId();
         if ((success = d.attach())) {
             std::cerr << " - attached" << std::endl;
@@ -407,7 +434,18 @@ auto initialise(Graph &graph, std::map<std::string, Tensor> &tensors,
     return s;
 }
 
-auto main() -> int {
+bool isObstacle(unsigned x, unsigned y)
+{
+
+    auto isCircle = (x - Constants.cx) * (x - Constants.cx) + (y - Constants.cy) * (y - Constants.cy) < Constants.r * Constants.r;
+    auto isSquare = (x > Constants.sx - Constants.sw / 2) & (x < Constants.sx + Constants.sw / 2) &
+                    (y > Constants.sy - Constants.sw / 2) & (y < Constants.sy + Constants.sw / 2);
+    return isSquare | isCircle;
+}
+
+auto main() -> int
+{
+    double total_compute_time = 0.0;
     std::chrono::high_resolution_clock::time_point tic, toc;
     // auto device = getIpuModel();
     auto device = getIpuDevice();
@@ -455,6 +493,20 @@ auto main() -> int {
         poputil::mapTensorLinearly(graph, tensors[name]);
     }
 
+    auto obstacle_array = std::unique_ptr<bool[]>(new bool[Constants.nx * Constants.ny]());
+    for (auto i = 0u; i < Constants.nx; i++)
+    {
+        for (auto j = 0u; j < Constants.ny; j++)
+        {
+            obstacle_array[i * Constants.ny + j] = isObstacle(i, j);
+        }
+    }
+
+    auto output_array = std::unique_ptr<float[]>(new float[2 * Constants.nx * Constants.ny]());
+
+    tensors["obstacle"] = graph.addConstant(BOOL, {Constants.nx, Constants.ny}, obstacle_array.get(), "obstacle");
+    poputil::mapTensorLinearly(graph, tensors["obstacle"]);
+
     tensors["rho"] = graph.addVariable(FLOAT, {Constants.nx, Constants.ny}, "rho");
     poputil::mapTensorLinearly(graph, tensors["rho"]);
 
@@ -477,53 +529,82 @@ auto main() -> int {
              {"-omega", -Constants.omega}});
 
     Sequence prog;
+    constexpr auto LOOPS_BEFORE_READ = 2;
 
     // auto equilibriumFn = graph.addFunction(equilibrium(graph, tensors));
     // auto macroscopicFn = graph.addFunction(macroscopic(graph, tensors));
     // auto incrementTimestepFn = graph.addFunction(incrementTimestep(graph, tensors));
+
     initialiseVelocityTensor(graph, tensors);
+
     prog.add(
-            Sequence(
-                    initialise(graph, tensors, v),
-                    Repeat(Constants.maxIter,
-                           Sequence(
-                                   outflowCondition(graph, tensors, v),
-                                   inflowCondition(graph, tensors),
-                                   equilibriumStep(graph, tensors, v),
-                                   collision(graph, tensors),
-                                   bounceBack(graph, tensors), // TODO implement
-                                   streaming(graph, tensors, v),
-                                   incrementTimestep(graph, tensors)))));
+
+        Repeat(LOOPS_BEFORE_READ,
+               Sequence(
+                   outflowCondition(graph, tensors, v),
+                   inflowCondition(graph, tensors),
+                   equilibriumStep(graph, tensors, v),
+                   collision(graph, tensors),
+                   bounceBack(graph, tensors), // TODO implement
+                   streaming(graph, tensors, v),
+                   incrementTimestep(graph, tensors))));
 
     toc = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count() * 1000;
     std::cerr << "Took " << std::right << std::setw(12) << std::setprecision(5) << diff << "ms" << std::endl;
 
     //-----
+
     std::cerr << "Creating engine and loading computational graph" << std::endl;
     tic = std::chrono::high_resolution_clock::now();
 
-    auto engine = Engine(graph, prog, POPLAR_ENGINE_OPTIONS);
+    auto outStream = graph.addDeviceToHostFIFO("u", FLOAT, 2 * Constants.nx * Constants.ny);
+
+    auto engine = Engine(graph, {initialise(graph, tensors, v), prog, Copy(tensors["u"], outStream)}, POPLAR_ENGINE_OPTIONS);
+    engine.connectStream(outStream, output_array.get());
     std::cerr << "Loading..." << std::endl;
 
     engine.load(device.value());
 
     toc = std::chrono::high_resolution_clock::now();
 
-    diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count() * 1000;
-    std::cerr << "Took " << std::right << std::setw(12) << std::setprecision(5) << diff << "ms" << std::endl;
+    diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+    std::cerr << "Took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
+
+    std::cerr << "Running initiatilisation step ";
+    tic = std::chrono::high_resolution_clock::now();
+
+    engine.run(0);
+    toc = std::chrono::high_resolution_clock::now();
+    diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+    std::cerr << "took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
+    total_compute_time += diff;
 
     // ---
-    std::cerr << "Running" << std::endl;
-    tic = std::chrono::high_resolution_clock::now();
-    engine.run();
-    toc = std::chrono::high_resolution_clock::now();
-    diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count() * 1000;
-    std::cerr << "Took " << std::right << std::setw(12) << std::setprecision(5) << diff << "ms" << std::endl;
+    for (unsigned l = 0; l < Constants.maxIter / LOOPS_BEFORE_READ; l++)
+    {
+        std::cerr << "Running " << LOOPS_BEFORE_READ << " iters ";
+        tic = std::chrono::high_resolution_clock::now();
+        engine.run(1);
+        toc = std::chrono::high_resolution_clock::now();
+        diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        std::cerr << "took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
+        total_compute_time += diff;
+
+        std::cerr << "Copy to host ";
+        tic = std::chrono::high_resolution_clock::now();
+        engine.run(2);
+        toc = std::chrono::high_resolution_clock::now();
+        diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        std::cerr << "took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
+    }
 
     captureProfileInfo(engine);
+
     engine.printProfileSummary(std::cout,
                                OptionFlags{{"showExecutionSteps", "false"}});
+
+    std::cerr << "Total compute time was  " << std::right << std::setw(12) << std::setprecision(5) << total_compute_time << "s" << std::endl;
 
     return EXIT_SUCCESS;
 }
