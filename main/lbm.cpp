@@ -15,25 +15,26 @@
 #include <iostream>
 #include <poplar/Program.hpp>
 #include <popops/Reduce.hpp>
-#include <iostream>
 #include <fstream>
-#include <iomanip>
-#include <math.h>
+#include <cmath>
 #include <chrono>
 #include <algorithm>
 #include <poputil/Broadcast.hpp>
+#include <random>
+
+#include "DoubleRoll.hpp"
 
 using namespace poplar;
 using namespace poplar::program;
 using namespace popops;
 
 const auto POPLAR_ENGINE_OPTIONS = OptionFlags{
-    {"target.saveArchive", "archive.a"},
-    {"debug.instrument", "true"},
-    {"debug.instrumentCompute", "true"},
-    {"debug.loweredVarDumpFile", "vars.capnp"},
-    {"debug.instrumentControlFlow", "true"},
-    {"debug.computeInstrumentationLevel", "tile"}};
+        {"target.saveArchive",                "archive.a"},
+        {"debug.instrument",                  "true"},
+        {"debug.instrumentCompute",           "true"},
+        {"debug.loweredVarDumpFile",          "vars.capnp"},
+        {"debug.instrumentControlFlow",       "true"},
+        {"debug.computeInstrumentationLevel", "tile"}};
 
 // const auto POPLAR_ENGINE_OPTIONS = OptionFlags{};
 
@@ -58,8 +59,7 @@ auto getIpuModel() -> std::optional<Device> {
 // nulb = uLB * r/ Re # Viscosity in lattice units
 // omega = 1 / (3 * nulb + 0.5) # Relaxation Parameter
 
-struct
-{
+struct {
     // const unsigned maxIter = 20 * 1000;
     const unsigned maxIter = 2;
     const float Re = 220.0;     // Reynolds number
@@ -73,8 +73,8 @@ struct
     const unsigned sy = ny / 3;
     const unsigned sw = ny / 7;               // Coordinates of square obstacle
     const float uLB = 0.04;                   // Velocity of the lattice units
-    const float nulb = uLB * r / Re;          // Viscosity in lattice units
-    const float omega = 1 / (3 * nulb + 0.5); //  Relaxation Parameter
+    const float nulb = uLB * (float) r / Re;          // Viscosity in lattice units
+    const float omega = 1.0f / (3.0f * nulb + 0.5f); //  Relaxation Parameter
     const float accel = 1;                    // Density redistribution
     const float density = 1;                  // Density per link
 } Constants;
@@ -87,8 +87,8 @@ struct
 //         u[1,:,:] += v[i,1] * fin[i,:,:]
 //     u /= rho
 //     return rho, u
-auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors,
+                 const std::vector<std::tuple<int, int>> &v) -> Program {
     std::cerr << __FUNCTION__ << std::endl;
 
     Sequence prog;
@@ -106,7 +106,7 @@ auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors, const std
         addInPlace(graph, tensors["u"][1], b, prog, "u[1,:,:] += v[i,1] * fin[i,:,:]");
     }
     divInPlace(graph, tensors["u"], tensors["rho"], prog, "u /= rho");
-    return prog;
+    return std::move(prog);
 }
 
 // def equilibrium(rho, u):
@@ -116,8 +116,8 @@ auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors, const std
 //         cu = 3 * (v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])
 //         feq[i,:,:] = rho * t[i] * (1+ cu + 0.5 * cu ** 2 - usqr)
 //     return feq
-auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors,
+                 const std::vector<std::tuple<int, int>> &v) -> Program {
     std::cerr << __FUNCTION__ << std::endl;
 
     Sequence prog;
@@ -167,7 +167,7 @@ auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors, const std
         auto feqi = mul(graph, rho_ti, all_in_par, prog, "feq[i,:,:] = rho * t[i] * (1+ cu + 0.5 * cu ** 2 - usqr)");
         prog.add(Copy(feqi, tensors["feq"][i], "feq[i,:,:] = rho * t[i] * (1+ cu + 0.5 * cu ** 2 - usqr)"));
     }
-    return prog;
+    return std::move(prog);
 }
 
 // def initial_velocity_fun(d, x, y):
@@ -180,27 +180,34 @@ auto initialiseVelocityTensor(Graph &graph, std::map<std::string, Tensor> &tenso
     for (auto d = 0u; d < 2u; d++)
         for (auto x = 0U; x < Constants.nx; x++)
             for (auto y = 0u; y < Constants.ny; y++)
-                vel[d * (x * y) + x * y + y] = (1 - d) * Constants.uLB * (1 + 1e-4 * sin(y / Constants.ly * 2 * M_PI));
+                vel[d * (x * y) + x * y + y] =
+                        (1.0f - d) * Constants.uLB * (1 + 1e-4 * sin(y / Constants.ly * 2 * M_PI));
 
     tensors["vel"] = graph.addConstant(FLOAT, {2, Constants.nx, Constants.ny}, vel.data(), "vel");
     poputil::mapTensorLinearly(graph, tensors["vel"]);
 }
 
-auto addScalarContants(Graph &graph, std::map<std::string, Tensor> &tensors, std::map<std::string, float> thingsToAdd) {
+auto randomTile(const unsigned numTiles) -> unsigned int {
+    std::default_random_engine generator;
+    std::uniform_int_distribution<unsigned> distribution(0, 1216);
+    return distribution(generator);
+}
+
+auto addScalarContants(Graph &graph, std::map<std::string, Tensor> &tensors,
+                       const std::map<std::string, float> &thingsToAdd, const unsigned numTiles) {
     for (auto const &[name, value] : thingsToAdd) {
         tensors[name] = graph.addConstant(FLOAT, {}, value, name);
         // We map to random vertex because they'll be accessed from everywhere
-        graph.setTileMapping(tensors[name], rand() % graph.getTarget().getNumTiles());
+        graph.setTileMapping(tensors[name], randomTile(numTiles));
     }
 }
 
-auto incrementTimestep(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
-{
+auto incrementTimestep(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
     std::cerr << __FUNCTION__ << std::endl;
 
     Sequence s;
     popops::addInPlace(graph, tensors["timestep"], tensors["1u"], s, "timestep++");
-    return s;
+    return std::move(s);
 }
 
 auto captureProfileInfo(Engine &engine) {
@@ -217,8 +224,7 @@ auto captureProfileInfo(Engine &engine) {
     executionOfs.close();
 }
 
-auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
-{
+auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
     std::cerr << __FUNCTION__ << std::endl;
 
     //     # Left wall: inflow condition
@@ -241,11 +247,11 @@ auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Pr
                        "1/(1-u[0,0,:]) * (np.sum(fin[col2, 0, :], axis=0) + 2 * np.sum(fin[col3,0,:], axis=0))");
     s.add(Copy(sum_fin_345, tensors["rho"][0]));
 
-    return s;
+    return std::move(s);
 }
 
-auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors,
+                      const std::vector<std::tuple<int, int>> &v) -> Program {
     std::cerr << __FUNCTION__ << std::endl;
 
     //     # Right wall: outflow condition
@@ -271,73 +277,9 @@ auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors, cons
 
     s.add(macroscopic(graph, tensors, v));
 
-    return s;
+    return std::move(s);
 }
 
-auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y) -> Program
-{
-    std::cerr << __FUNCTION__ << std::endl;
-
-    assert(roll_x > -2 && roll_x < 2);
-    assert(roll_y > -2 && roll_y < 2);
-
-    auto s = Sequence();
-    auto lx = src.dim(0);
-    auto ly = src.dim(1);
-
-    std::cerr << "lx " << lx << "ly " << ly << " "<< "rollx " << roll_x << "roll_y " << roll_y << " " << __FUNCTION__ << std::endl;
-
-    typedef std::tuple<size_t, size_t> SliceBounds;
-    typedef std::tuple<SliceBounds, SliceBounds> SlicePair;
-
-    auto src_slices = std::vector<SlicePair>{
-        // x slice, y slice
-        {{1, lx - 1}, {1, ly - 1}},   // middle block
-        {{0, 1}, {1, ly - 1}},        // left col no corners
-        {{lx - 1, lx}, {1, ly - 1}},  // right col no corners
-        {{1, lx - 1}, {0, 1}},        // top row no corners <--
-        {{1, lx - 1}, {ly - 1, ly}},  // bottom row no corners
-        {{0, 1}, {0, 1}},             // top left cell
-        {{0, 1}, {ly - 1, ly}},       // bottom left cell
-        {{lx - 1, lx}, {0, 1}},       // top right cell
-        {{lx - 1, lx}, {ly - 1, ly}}, // bottom right cell
-    };
-
-    auto dst_slices = std::vector<SlicePair>();
-    auto toDstSlices = [roll_x, lx, roll_y, ly](SlicePair sp) -> SlicePair {
-        auto const &[xSlice, ySlice] = sp;
-        auto const &[xFrom, xTo] = xSlice;
-        auto const &[yFrom, yTo] = ySlice;
-        auto dst_xFrom = (xFrom - roll_x) % lx;
-        auto dst_xTo = (xTo - roll_x) % lx;
-        dst_xTo = dst_xTo == 0 ? lx : dst_xTo;
-        auto dst_yFrom = (yFrom - roll_y) % ly;
-        auto dst_yTo = (yTo - roll_y) % ly;
-        dst_yTo = dst_yTo == 0 ? ly : dst_yTo;
-
-        return {
-            {dst_xFrom, dst_xTo},
-            {dst_yFrom, dst_yTo}};
-    }; // TODO: This definitely needs unit tests
-    std::transform(src_slices.begin(), src_slices.end(), std::back_inserter(dst_slices), toDstSlices);
-    for (auto i = 0; i < 9; i++) {
-        auto const &[src_xSlice, src_ySlice] = src_slices[i];
-        auto const &[src_xFrom, src_xTo] = src_xSlice;
-        auto const &[src_yFrom, src_yTo] = src_ySlice;
-        auto const &[dst_xSlice, dst_ySlice] = dst_slices[i];
-        auto const &[dst_xFrom, dst_xTo] = dst_xSlice;
-        auto const &[dst_yFrom, dst_yTo] = dst_ySlice;
-        std::cout << "src[[" << src_xFrom << ":" << src_xTo << "),[" << src_yFrom << ":" << src_yTo << ")]" << std::endl;
-        std::cout << "dst[[" << dst_xFrom << ":" << dst_xTo << "),[" << dst_yFrom << ":" << dst_yTo << ")]" << std::endl;
-        std::cerr << "i " << i << " " << src_xFrom << " " << src_xTo << " " << src_yFrom << " " << src_yTo << " " << dst_xFrom << " " << dst_xTo << " " << dst_yFrom << " " << dst_yTo << " " << __LINE__ << std::endl;
-        std::cerr << src.dim(0) << "x" << src.dim(1) << std::endl;
-        auto src_slice = src.slice({src_xFrom, src_yFrom}, {src_xTo, src_yTo});
-        auto dst_slice = dst.slice({dst_xFrom, dst_yFrom}, {dst_xTo, dst_yTo});
-        s.add(Copy(src_slice, dst_slice));
-    }
-    return s;
-    std::cerr << "done" << __FUNCTION__ << std::endl;
-}
 
 auto
 streaming(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program {
@@ -356,7 +298,7 @@ streaming(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vecto
         s.add(doubleRolledCopy(graph, src, dst, x, y));
         i++;
     }
-    return s;
+    return std::move(s);
 }
 
 auto equilibriumStep(Graph &graph, std::map<std::string, Tensor> &tensors,
@@ -371,7 +313,7 @@ auto equilibriumStep(Graph &graph, std::map<std::string, Tensor> &tensors,
     s.add(Copy(tensors["feq"].slice(0, 3, 0)[0], tensors["fin"].slice(0, 3, 0)[0]));
     addInPlace(graph, tensors["fin"].slice(0, 3, 0)[0], reversed, s,
                "fin[[0,1,2],0,:] = feq[[0,1,2],0,:] + fin[[8,7,6], 0, :] - feq[[8,7,6],0,:]");
-    return s;
+    return std::move(s);
 }
 
 auto collision(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
@@ -380,7 +322,7 @@ auto collision(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program 
     auto fin_min_feq = sub(graph, tensors["fin"], tensors["feq"], s, "(fin - feq)");
     s.add(Copy(tensors["fin"], tensors["fout"]));
     scaledAddTo(graph, tensors["fout"], fin_min_feq, tensors["-omega"], s, "fout=fin - omega * (fin - feq)");
-    return s;
+    return std::move(s);
 }
 
 Program bounceBack(Graph &graph, std::map<std::string, Tensor> &tensors) {
@@ -396,28 +338,25 @@ Program bounceBack(Graph &graph, std::map<std::string, Tensor> &tensors) {
 
     // actually we can do this in one 3x3 tensor op!
     poputil::broadcastToMatch(tensors["obstacle"], {9, Constants.nx, Constants.ny}); //TODO: just do this on creation
-    popops::select(graph, tensors["fout"], tensors["fin"].reverse(0), tensors["obstacle"], s, "fout[i, obstacle] = fin[8-i, obstacle]");
-    return s;
+    popops::select(graph, tensors["fout"], tensors["fin"].reverse(0), tensors["obstacle"], s,
+                   "fout[i, obstacle] = fin[8-i, obstacle]");
+    return std::move(s);
 }
 
 auto getIpuDevice() -> std::optional<Device> {
     DeviceManager manager = DeviceManager::createDeviceManager();
 
     // Attempt to connect to a single IPU
-    bool success = false;
-    for (auto &d : manager.getDevices(poplar::TargetType::IPU, 1))
-    {
+    for (auto &d : manager.getDevices(poplar::TargetType::IPU, 1)) {
         std::cerr << "Trying to attach to IPU " << d.getId();
-        if ((success = d.attach())) {
+        if (d.attach()) {
             std::cerr << " - attached" << std::endl;
             return {std::move(d)};
         } else {
             std::cerr << std::endl;
         }
     }
-    if (!success) {
-        std::cerr << "Error attaching to device" << std::endl;
-    }
+    std::cerr << "Error attaching to device" << std::endl;
     return std::nullopt;
 }
 
@@ -431,24 +370,23 @@ auto initialise(Graph &graph, std::map<std::string, Tensor> &tensors,
     addInPlace(graph, tensors["rho"], tensors["1"], s, "rho+=1");
     s.add(equilibrium(graph, tensors, v));
 
-    return s;
+    return std::move(s);
 }
 
-bool isObstacle(unsigned x, unsigned y)
-{
+bool isObstacle(unsigned x, unsigned y) {
 
-    auto isCircle = (x - Constants.cx) * (x - Constants.cx) + (y - Constants.cy) * (y - Constants.cy) < Constants.r * Constants.r;
-    auto isSquare = (x > Constants.sx - Constants.sw / 2) & (x < Constants.sx + Constants.sw / 2) &
-                    (y > Constants.sy - Constants.sw / 2) & (y < Constants.sy + Constants.sw / 2);
+    auto isCircle = (x - Constants.cx) * (x - Constants.cx) + (y - Constants.cy) * (y - Constants.cy) <
+                    Constants.r * Constants.r;
+    auto isSquare = (x > (Constants.sx - Constants.sw) / 2) && (x < (Constants.sx + Constants.sw) / 2) &&
+                    (y > (Constants.sy - Constants.sw) / 2) && (y < (Constants.sy + Constants.sw) / 2);
     return isSquare | isCircle;
 }
 
-auto main() -> int
-{
+auto main() -> int {
     double total_compute_time = 0.0;
     std::chrono::high_resolution_clock::time_point tic, toc;
-    // auto device = getIpuModel();
-    auto device = getIpuDevice();
+    auto device = getIpuModel();
+    //auto device = getIpuDevice();
     if (!device.has_value()) {
         return EXIT_FAILURE;
     }
@@ -494,10 +432,8 @@ auto main() -> int
     }
 
     auto obstacle_array = std::unique_ptr<bool[]>(new bool[Constants.nx * Constants.ny]());
-    for (auto i = 0u; i < Constants.nx; i++)
-    {
-        for (auto j = 0u; j < Constants.ny; j++)
-        {
+    for (auto i = 0u; i < Constants.nx; i++) {
+        for (auto j = 0u; j < Constants.ny; j++) {
             obstacle_array[i * Constants.ny + j] = isObstacle(i, j);
         }
     }
@@ -526,7 +462,8 @@ auto main() -> int
              {"2",      2.0f},
              {"3",      3.0f},
              {"3/2",    3.0 / 2.0f},
-             {"-omega", -Constants.omega}});
+             {"-omega", -Constants.omega}},
+            graph.getTarget().getNumTiles());
 
     Sequence prog;
     constexpr auto LOOPS_BEFORE_READ = 2;
@@ -539,15 +476,15 @@ auto main() -> int
 
     prog.add(
 
-        Repeat(LOOPS_BEFORE_READ,
-               Sequence(
-                   outflowCondition(graph, tensors, v),
-                   inflowCondition(graph, tensors),
-                   equilibriumStep(graph, tensors, v),
-                   collision(graph, tensors),
-                   bounceBack(graph, tensors), // TODO implement
-                   streaming(graph, tensors, v),
-                   incrementTimestep(graph, tensors))));
+            Repeat(LOOPS_BEFORE_READ,
+                   Sequence(
+                           outflowCondition(graph, tensors, v),
+                           inflowCondition(graph, tensors),
+                           equilibriumStep(graph, tensors, v),
+                           collision(graph, tensors),
+                           bounceBack(graph, tensors),
+                           streaming(graph, tensors, v),
+                           incrementTimestep(graph, tensors))));
 
     toc = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count() * 1000;
@@ -560,7 +497,8 @@ auto main() -> int
 
     auto outStream = graph.addDeviceToHostFIFO("u", FLOAT, 2 * Constants.nx * Constants.ny);
 
-    auto engine = Engine(graph, {initialise(graph, tensors, v), prog, Copy(tensors["u"], outStream)}, POPLAR_ENGINE_OPTIONS);
+    auto engine = Engine(graph, {initialise(graph, tensors, v), prog, Copy(tensors["u"], outStream)},
+                         POPLAR_ENGINE_OPTIONS);
     engine.connectStream(outStream, output_array.get());
     std::cerr << "Loading..." << std::endl;
 
@@ -581,8 +519,7 @@ auto main() -> int
     total_compute_time += diff;
 
     // ---
-    for (unsigned l = 0; l < Constants.maxIter / LOOPS_BEFORE_READ; l++)
-    {
+    for (unsigned l = 0; l < Constants.maxIter / LOOPS_BEFORE_READ; l++) {
         std::cerr << "Running " << LOOPS_BEFORE_READ << " iters ";
         tic = std::chrono::high_resolution_clock::now();
         engine.run(1);
@@ -604,7 +541,8 @@ auto main() -> int
     engine.printProfileSummary(std::cout,
                                OptionFlags{{"showExecutionSteps", "false"}});
 
-    std::cerr << "Total compute time was  " << std::right << std::setw(12) << std::setprecision(5) << total_compute_time << "s" << std::endl;
+    std::cerr << "Total compute time was  " << std::right << std::setw(12) << std::setprecision(5) << total_compute_time
+              << "s" << std::endl;
 
     return EXIT_SUCCESS;
 }
