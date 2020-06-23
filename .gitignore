@@ -3,3 +3,9 @@ core
 play
 vars.capnp
 .idea
+**/CMakeFiles
+**/*.cmake
+**/Makefile
+build
+Testing/
+test/gtest
