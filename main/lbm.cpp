@@ -39,8 +39,7 @@ const auto POPLAR_ENGINE_OPTIONS = OptionFlags{};
 // %matplotlib inline
 // %config InlineBackend.figure_format='retina'
 
-auto getIpuModel() -> std::optional<Device>
-{
+auto getIpuModel() -> std::optional<Device> {
     IPUModel ipuModel;
     ipuModel.numIPUs = 1;
     ipuModel.tilesPerIPU = 1216;
@@ -58,8 +57,7 @@ auto getIpuModel() -> std::optional<Device>
 // nulb = uLB * r/ Re # Viscosity in lattice units
 // omega = 1 / (3 * nulb + 0.5) # Relaxation Parameter
 
-struct
-{
+struct {
     const unsigned maxIter = 20 * 1000;
     const float Re = 220.0;     // Reynolds number
     const unsigned nx = 1024;   // Number of lattice nodes
@@ -86,14 +84,13 @@ struct
 //         u[1,:,:] += v[i,1] * fin[i,:,:]
 //     u /= rho
 //     return rho, u
-auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors,
+                 const std::vector<std::tuple<int, int>> &v) -> Program {
     Sequence prog;
     reduceWithOutput(graph, tensors["fin"], tensors["rho"], {0},
                      {Operation::ADD}, prog, "rho=sum(fin, axis=0)");
     mulInPlace(graph, tensors["u"], tensors["0"], prog);
-    for (auto i = 0u; i < 9; i++)
-    {
+    for (auto i = 0u; i < 9; i++) {
         auto vi0 = tensors[std::to_string(std::get<0>(v[i]))];
         auto vi1 = tensors[std::to_string(std::get<1>(v[i]))];
         // TODO could parallalise all 9 thingies by unrolling, storing in partial and reducing
@@ -113,17 +110,17 @@ auto macroscopic(Graph &graph, std::map<std::string, Tensor> &tensors, const std
 //         cu = 3 * (v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])
 //         feq[i,:,:] = rho * t[i] * (1+ cu + 0.5 * cu ** 2 - usqr)
 //     return feq
-auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors,
+                 const std::vector<std::tuple<int, int>> &v) -> Program {
     Sequence prog;
 
     auto usqr = mul(graph,
                     tensors["3/2"],
                     add(
-                        graph,
-                        square(graph, tensors["u"][0], prog, "u[0]**2"),
-                        square(graph, tensors["u"][1], prog, "u[1]**2"),
-                        prog),
+                            graph,
+                            square(graph, tensors["u"][0], prog, "u[0]**2"),
+                            square(graph, tensors["u"][1], prog, "u[1]**2"),
+                            prog),
                     prog,
                     "usqr=3/2 * (u[0]**2 + u[1]**2)");
 
@@ -132,26 +129,26 @@ auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors, const std
     for (auto i = 0u; i < 9; i++) // Can probably paralallise & reduce this
     {
         auto cu = mul(
-            graph,
-            tensors["3"],
-            add(
                 graph,
-                mul(
-                    graph,
-                    tensors[std::to_string(std::get<0>(v[i]))],
-                    tensors["u"][0],
-                    prog,
-                    "v[i,0]*u[0,:,:]"),
-                mul(
-                    graph,
-                    tensors[std::to_string(std::get<1>(v[i]))],
-                    tensors["u"][1],
-                    prog,
-                    "v[i,1]*u[1,:,:]"),
+                tensors["3"],
+                add(
+                        graph,
+                        mul(
+                                graph,
+                                tensors[std::to_string(std::get<0>(v[i]))],
+                                tensors["u"][0],
+                                prog,
+                                "v[i,0]*u[0,:,:]"),
+                        mul(
+                                graph,
+                                tensors[std::to_string(std::get<1>(v[i]))],
+                                tensors["u"][1],
+                                prog,
+                                "v[i,1]*u[1,:,:]"),
+                        prog,
+                        "(v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])"),
                 prog,
-                "(v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])"),
-            prog,
-            "cu = 3 * (v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])");
+                "cu = 3 * (v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])");
 
         auto cusqr = square(graph, cu, prog, "cu**2");
         auto half_cusqr = mul(graph, cusqr, tensors["0.5"], prog, "0.5 * cu**2");
@@ -169,8 +166,7 @@ auto equilibrium(Graph &graph, std::map<std::string, Tensor> &tensors, const std
 //     return (1 - d) * uLB * (1 + 1e-4 * np.sin(y/ly * 2 * np.pi))
 //
 // vel = np.fromfunction(initial_velocity_fun, (2, nx, ny))
-auto initialiseVelocityTensor(Graph &graph, std::map<std::string, Tensor> &tensors)
-{
+auto initialiseVelocityTensor(Graph &graph, std::map<std::string, Tensor> &tensors) {
     auto vel = std::vector<float>(2 * Constants.nx * Constants.ny, {});
 
     for (auto d = 0u; d < 2u; d++)
@@ -182,25 +178,21 @@ auto initialiseVelocityTensor(Graph &graph, std::map<std::string, Tensor> &tenso
     poputil::mapTensorLinearly(graph, tensors["vel"]);
 }
 
-auto addScalarContants(Graph &graph, std::map<std::string, Tensor> &tensors, std::map<std::string, float> thingsToAdd)
-{
-    for (auto const &[name, value] : thingsToAdd)
-    {
+auto addScalarContants(Graph &graph, std::map<std::string, Tensor> &tensors, std::map<std::string, float> thingsToAdd) {
+    for (auto const &[name, value] : thingsToAdd) {
         tensors[name] = graph.addConstant(FLOAT, {}, value, name);
         // We map to random vertex because they'll be accessed from everywhere
         graph.setTileMapping(tensors[name], rand() % graph.getTarget().getNumTiles());
     }
 }
 
-auto incrementTimestep(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
-{
+auto incrementTimestep(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
     Sequence s;
     popops::addInPlace(graph, tensors["timestep"], tensors["1u"], s, "timestep++");
     return s;
 }
 
-auto captureProfileInfo(Engine &engine)
-{
+auto captureProfileInfo(Engine &engine) {
     std::ofstream graphOfs;
     graphOfs.open("graph.json", std::ofstream::out | std::ofstream::trunc);
 
@@ -214,14 +206,12 @@ auto captureProfileInfo(Engine &engine)
     executionOfs.close();
 }
 
-auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
-{
+auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
     //     # Left wall: inflow condition
     //     u[:,0,:] = vel[:,0,:]
     //     rho[0,:] = 1/(1-u[0,0,:]) * (np.sum(fin[col2, 0, :], axis=0) + 2 * np.sum(fin[col3,0,:], axis=0))
     Sequence s;
-    for (const auto &[k, v] : tensors)
-    {
+    for (const auto &[k, v] : tensors) {
         std::cout << k << " ";
     }
     std::cout << std::endl;
@@ -244,8 +234,8 @@ auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Pr
     return s;
 }
 
-auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors,
+                      const std::vector<std::tuple<int, int>> &v) -> Program {
     //     # Right wall: outflow condition
     //     fin[col3, -1, :] = fin[col3, -2, :]
     //     rho, u = macroscopic(fin)
@@ -270,8 +260,7 @@ auto outflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors, cons
     return s;
 }
 
-auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y) -> Program
-{
+auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y) -> Program {
     assert(roll_x > -2 && roll_x < 2);
     assert(roll_y > -2 && roll_y < 2);
 
@@ -283,16 +272,16 @@ auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y
     typedef std::tuple<SliceBounds, SliceBounds> SlicePair;
 
     auto src_slices = std::vector<SlicePair>{
-        // x slice, y slice
-        {{1, lx - 1}, {1, ly - 1}},   // middle block
-        {{0, 1}, {1, ly - 1}},        // left col no corners
-        {{lx - 1, lx}, {1, ly - 1}},  // right col no corners
-        {{1, lx - 1}, {0, 1}},        // top row no corners
-        {{1, lx - 1}, {ly - 1, ly}},  // bottom row no corners
-        {{0, 1}, {0, 1}},             // top left cell
-        {{0, 1}, {ly - 1, ly}},       // bottom left cell
-        {{lx - 1, lx}, {0, 1}},       // top right cell
-        {{lx - 1, lx}, {ly - 1, ly}}, // bottom right cell
+            // x slice, y slice
+            {{1,      lx - 1}, {1,      ly - 1}},   // middle block
+            {{0,      1},      {1,      ly - 1}},        // left col no corners
+            {{lx - 1, lx},     {1,      ly - 1}},  // right col no corners
+            {{1,      lx - 1}, {0,      1}},        // top row no corners
+            {{1,      lx - 1}, {ly - 1, ly}},  // bottom row no corners
+            {{0,      1},      {0,      1}},             // top left cell
+            {{0,      1},      {ly - 1, ly}},       // bottom left cell
+            {{lx - 1, lx},     {0,      1}},       // top right cell
+            {{lx - 1, lx},     {ly - 1, ly}}, // bottom right cell
     };
 
     auto dst_slices = std::vector<SlicePair>();
@@ -308,12 +297,11 @@ auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y
         dst_yTo = dst_yTo == 0 ? lx : dst_yTo;
 
         return {
-            {dst_xFrom, dst_xTo},
-            {dst_yFrom, dst_yTo}};
+                {dst_xFrom, dst_xTo},
+                {dst_yFrom, dst_yTo}};
     };
     std::transform(src_slices.begin(), src_slices.end(), std::back_inserter(dst_slices), toDstSlices);
-    for (auto i = 0; i < 9; i++)
-    {
+    for (auto i = 0; i < 9; i++) {
         auto const &[src_xSlice, src_ySlice] = src_slices[i];
         auto const &[src_xFrom, src_xTo] = src_xSlice;
         auto const &[src_yFrom, src_yTo] = src_ySlice;
@@ -330,8 +318,8 @@ auto doubleRolledCopy(Graph &g, Tensor &src, Tensor &dst, int roll_x, int roll_y
     return s;
 }
 
-auto streaming(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto
+streaming(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program {
     // v = np.array([ [1, 1], [1, 0],  [1,-1], [0,1], [0,0],
     //             [0,-1], [-1, 1], [-1, 0], [-1,-1]])
     //     for i in range(9):
@@ -341,8 +329,7 @@ auto streaming(Graph &graph, std::map<std::string, Tensor> &tensors, const std::
     //TODO feature request for roll in Poplar
     Sequence s;
     size_t i = 0;
-    for (auto &[x, y] : v)
-    {
+    for (auto &[x, y] : v) {
         auto src = tensors["fout"][i];
         auto dst = tensors["fin"][i];
         s.add(doubleRolledCopy(graph, src, dst, x, y));
@@ -351,8 +338,8 @@ auto streaming(Graph &graph, std::map<std::string, Tensor> &tensors, const std::
     return s;
 }
 
-auto equilibriumStep(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto equilibriumStep(Graph &graph, std::map<std::string, Tensor> &tensors,
+                     const std::vector<std::tuple<int, int>> &v) -> Program {
     //     feq = equilibrium(rho, u)
     //     fin[[0,1,2],0,:] = feq[[0,1,2],0,:] + fin[[8,7,6], 0, :] - feq[[8,7,6],0,:]
     Sequence s;
@@ -366,8 +353,7 @@ auto equilibriumStep(Graph &graph, std::map<std::string, Tensor> &tensors, const
     return s;
 }
 
-auto collision(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
-{
+auto collision(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
     //     fout = fin - omega * (fin - feq)
     Sequence s;
     auto fin_min_feq = sub(graph, tensors["fin"], tensors["feq"], s, "(fin - feq)");
@@ -376,48 +362,40 @@ auto collision(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program
     return s;
 }
 
-Program bounceBack(Graph &graph, std::map<std::string, Tensor> &tensors)
-{
+Program bounceBack(Graph &graph, std::map<std::string, Tensor> &tensors) {
     //     for i in range(9):
     //         fout[i, obstacle] = fin[8-i, obstacle]
 
     // TODO? Mask or use select()
     Sequence s;
-    for (auto i = 0u; i < 9; i++)
-    {
+    for (auto i = 0u; i < 9; i++) {
         //fout[i] = (1 - obstacle) * fin[i] + obstacle * fin[8 - i]
     }
     return s;
 }
 
-auto getIpuDevice() -> std::optional<Device>
-{
+auto getIpuDevice() -> std::optional<Device> {
     DeviceManager manager = DeviceManager::createDeviceManager();
 
     // Attempt to connect to a single IPU
     bool success = false;
-    for (auto &d : manager.getDevices(poplar::TargetType::IPU, 4))
-    {
+    for (auto &d : manager.getDevices(poplar::TargetType::IPU, 4)) {
         std::cerr << "Trying to attach to IPU " << d.getId();
-        if ((success = d.attach()))
-        {
+        if ((success = d.attach())) {
             std::cerr << " - attached" << std::endl;
             return {std::move(d)};
-        }
-        else
-        {
+        } else {
             std::cerr << std::endl;
         }
     }
-    if (!success)
-    {
+    if (!success) {
         std::cerr << "Error attaching to device" << std::endl;
     }
     return std::nullopt;
 }
 
-auto initialise(Graph &graph, std::map<std::string, Tensor> &tensors, const std::vector<std::tuple<int, int>> &v) -> Program
-{
+auto initialise(Graph &graph, std::map<std::string, Tensor> &tensors,
+                const std::vector<std::tuple<int, int>> &v) -> Program {
     Sequence s;
     // fin = equilibrium(1, vel)
     s.add(Copy(tensors["vel"], tensors["u"]));
@@ -429,13 +407,11 @@ auto initialise(Graph &graph, std::map<std::string, Tensor> &tensors, const std:
     return s;
 }
 
-auto main() -> int
-{
+auto main() -> int {
     std::chrono::high_resolution_clock::time_point tic, toc;
     // auto device = getIpuModel();
     auto device = getIpuDevice();
-    if (!device.has_value())
-    {
+    if (!device.has_value()) {
         return EXIT_FAILURE;
     }
 
@@ -453,18 +429,18 @@ auto main() -> int
     //             [0,-1], [-1, 1], [-1, 0], [-1,-1]])
     // t = np.array([1/36, 1/9, 1/36, 1/9, 4/9, 1/9, 1/36, 1/9, 1/36])
     auto v = std::vector<std::tuple<int, int>>{
-        {{1, 1}, {1, 0}, {1, -1}, {0, 1}, {0, 0}, {0, -1}, {-1, 1}, {-1, 0}, {-1, -1}}}; // the directions the dimensions mean
+            {{1, 1}, {1, 0}, {1, -1}, {0, 1}, {0, 0}, {0, -1}, {-1, 1}, {-1, 0}, {-1, -1}}}; // the directions the dimensions mean
 
     const std::vector<float> tInit = {
-        Constants.density * Constants.accel / 36,
-        Constants.density * Constants.accel / 9,
-        Constants.density * Constants.accel / 36,
-        Constants.density * Constants.accel / 9,
-        4.0f * Constants.density * Constants.accel / 9,
-        Constants.density * Constants.accel / 9,
-        Constants.density * Constants.accel / 36,
-        Constants.density * Constants.accel / 9,
-        Constants.density * Constants.accel / 36};
+            Constants.density * Constants.accel / 36,
+            Constants.density * Constants.accel / 9,
+            Constants.density * Constants.accel / 36,
+            Constants.density * Constants.accel / 9,
+            4.0f * Constants.density * Constants.accel / 9,
+            Constants.density * Constants.accel / 9,
+            Constants.density * Constants.accel / 36,
+            Constants.density * Constants.accel / 9,
+            Constants.density * Constants.accel / 36};
     tensors["t"] = graph.addConstant(FLOAT, {9}, tInit.data(), "t");
     poputil::mapTensorLinearly(graph, tensors["t"]);
 
@@ -490,15 +466,15 @@ auto main() -> int
     graph.setInitialValue(tensors["timestep"], 0u);
 
     addScalarContants(
-        graph, tensors,
-        {{"-1", -1.0f},
-         {"0", 0.0f},
-         {"0.5", 0.5f},
-         {"1", 1.0f},
-         {"2", 2.0f},
-         {"3", 3.0f},
-         {"3/2", 3.0 / 2.0f},
-         {"-omega", -Constants.omega}});
+            graph, tensors,
+            {{"-1",     -1.0f},
+             {"0",      0.0f},
+             {"0.5",    0.5f},
+             {"1",      1.0f},
+             {"2",      2.0f},
+             {"3",      3.0f},
+             {"3/2",    3.0 / 2.0f},
+             {"-omega", -Constants.omega}});
 
     Sequence prog;
 
@@ -507,17 +483,17 @@ auto main() -> int
     // auto incrementTimestepFn = graph.addFunction(incrementTimestep(graph, tensors));
     initialiseVelocityTensor(graph, tensors);
     prog.add(
-        Sequence(
-            initialise(graph, tensors, v),
-            Repeat(Constants.maxIter,
-                   Sequence(
-                       outflowCondition(graph, tensors, v),
-                       inflowCondition(graph, tensors),
-                       equilibriumStep(graph, tensors, v),
-                       collision(graph, tensors),
-                       bounceBack(graph, tensors), // TODO implement
-                       streaming(graph, tensors, v),
-                       incrementTimestep(graph, tensors)))));
+            Sequence(
+                    initialise(graph, tensors, v),
+                    Repeat(Constants.maxIter,
+                           Sequence(
+                                   outflowCondition(graph, tensors, v),
+                                   inflowCondition(graph, tensors),
+                                   equilibriumStep(graph, tensors, v),
+                                   collision(graph, tensors),
+                                   bounceBack(graph, tensors), // TODO implement
+                                   streaming(graph, tensors, v),
+                                   incrementTimestep(graph, tensors)))));
 
     toc = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count() * 1000;
