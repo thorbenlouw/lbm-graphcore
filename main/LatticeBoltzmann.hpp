@@ -143,7 +143,7 @@ namespace lbm {
                         local_density = 0.f;
                         auto speeds = cells.at(ii, jj);
 
-                        for (int kk = 0u; kk < NumSpeeds; kk++) {
+                        for (auto kk = 0u; kk < NumSpeeds; kk++) {
                             local_density += speeds[kk];
                         }
 

@@ -27,7 +27,7 @@ namespace lbm {
 
         static auto fromFile(const std::string &filename) -> std::optional<Params> {
             std::ifstream file;
-            file.open("example.txt", std::ios::in);
+            file.open(filename, std::ios::in);
             auto readUnsigned = [&file]() -> size_t {
                 std::string line;
                 std::getline(file, line);
@@ -85,7 +85,7 @@ namespace lbm {
         static auto fromFile(size_t nx, size_t ny, const std::string &filename) -> std::optional<Obstacles> {
             auto data = std::unique_ptr<bool[]>{new bool[nx * ny]()};
             std::ifstream file;
-            file.open("example.txt", std::ios::in);
+            file.open(filename, std::ios::in);
             auto readLine = [&file]() -> std::optional<std::tuple<size_t, size_t>> {
                 std::string line;
                 if (std::getline(file, line)) {

@@ -62,8 +62,8 @@ auto main(int argc, char *argv[]) -> int {
     Graph graph(device.value().getTarget());
     popops::addCodelets(graph);
 
-    auto ave_vels = graph.addVariable(FLOAT, {params->maxIters}, poplar::VariableMappingMethod::LINEAR, "av_vel");
-    auto cellsTensor = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
+    tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters}, poplar::VariableMappingMethod::LINEAR, "av_vel");
+    tensors["cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
                                          poplar::VariableMappingMethod::LINEAR, "cells");
 
     toc = std::chrono::high_resolution_clock::now();
@@ -75,16 +75,19 @@ auto main(int argc, char *argv[]) -> int {
     std::cerr << "Creating engine and loading computational graph" << std::endl;
     tic = std::chrono::high_resolution_clock::now();
 
-    auto outStreamAveVelocities = graph.addDeviceToHostFIFO("av_vel", FLOAT, params->maxIters);
+    auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
     auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT, lbm::NumSpeeds * params->nx * params->ny);
     auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT, lbm::NumSpeeds * params->nx * params->ny);
 
-    auto streamBackToHostProg = Sequence(
-            Copy(tensors["speeds"], outStreamFinalCells),
-            Copy(tensors["av_vel"], outStreamAveVelocities)
-    );
+    for (const auto &[k, v]: tensors) {
+        std::cout << k << std::endl;
+    }
 
     auto copyCellsToDevice = Copy(inStreamCells, tensors["cells"]);
+    auto streamBackToHostProg = Sequence(
+            Copy(tensors["cells"], outStreamFinalCells),
+            Copy(tensors["av_vel"], outStreamAveVelocities)
+    );
 
     auto prog = Sequence();
 
@@ -126,6 +129,9 @@ auto main(int argc, char *argv[]) -> int {
     diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
     std::cerr << "took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
 
+
+    lbm::writeAverageVelocities("av_vels.dat", av_vels);
+    lbm::writeResults("final_state.dat", *params, *obstacles, cells);
 
     lbm::captureProfileInfo(engine);
 
