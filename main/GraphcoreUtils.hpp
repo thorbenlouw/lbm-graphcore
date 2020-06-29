@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <poplar/Engine.hpp>
 #include <poplar/IPUModel.hpp>
+#include <poplar/Program.hpp>
 
 #include <poplar/DeviceManager.hpp>
 #include <iomanip>
@@ -14,8 +15,12 @@
 #include <fstream>
 
 using namespace poplar;
+using namespace poplar::program;
 
 namespace lbm {
+
+    typedef  std::map<std::string, Tensor> TensorMap;
+
 
     const auto POPLAR_ENGINE_OPTIONS_DEBUG = OptionFlags{
             {"target.saveArchive",                "archive.a"},

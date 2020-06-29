@@ -5,8 +5,6 @@ set(Main_SRCS
         GraphcoreUtils.hpp
         LbmParams.hpp
         LatticeBoltzmann.hpp
-        D2Q9Codelets.cpp
-
         )
 
 
@@ -38,3 +36,5 @@ target_link_libraries(lbm_with_kernels
 install(TARGETS lbm DESTINATION bin)
 
 install(TARGETS lbm_with_kernels DESTINATION bin)
+
+configure_file(D2Q9Codelets.cpp D2Q9Codelets.cpp COPYONLY)
