@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
 }
 
 TEST(averageVelocity, testNormedVelocityVertex) {
-    auto device = lbm::getIpuDevice().value();
+    auto device = lbm::getIpuModel().value();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
     auto tensors = lbm::TensorMap{};
@@ -28,7 +28,7 @@ TEST(averageVelocity, testNormedVelocityVertex) {
                                                             0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                             2, 3, 4, 5, 6, 7, 8, 9, 10});
 
-    tensors["vels"] = graph.addVariable(FLOAT, {2}, "vels");
+    tensors["vels"] = graph.addVariable(FLOAT, {3}, "vels");
     graph.setTileMapping(tensors["vels"], 0);
 
     graph.createHostRead("readResult", tensors["vels"], false);
@@ -57,8 +57,8 @@ TEST(averageVelocity, testNormedVelocityVertex) {
     auto velocity = [](std::array<float, 9> cell) -> float {
         auto local_density = cell[0] + cell[1] + cell[2] + cell[3] + cell[4] +
                              cell[5] + cell[6] + cell[7] + cell[8];
-        auto ux = cell[1] + cell[5] + cell[8] - (cell[3] + cell[6] + cell[7]) / local_density;
-        auto uy = cell[2] + cell[5] + cell[6] - (cell[4] + cell[7] + cell[8]) / local_density;
+        auto ux = (cell[1] + cell[5] + cell[8] - (cell[3] + cell[6] + cell[7])) / local_density;
+        auto uy = (cell[2] + cell[5] + cell[6] - (cell[4] + cell[7] + cell[8])) / local_density;
         return sqrtf(ux * ux + uy * uy);
     };
 
@@ -77,16 +77,15 @@ TEST(averageVelocity, testMaskedSumPartial) {
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
     auto tensors = lbm::TensorMap{};
-    tensors["cells"] = graph.addVariable(FLOAT, {1, 3}, "cells");
+    tensors["velocities"] = graph.addVariable(FLOAT, {1, 3}, "cells");
     graph.setTileMapping(tensors["velocities"], 0);
     graph.setInitialValue(tensors["velocities"], ArrayRef<float>{1, 100, 1000});
     tensors["obstacles"] = graph.addVariable(BOOL, {3}, "obstacles");
     graph.setTileMapping(tensors["obstacles"], 0);
     graph.setInitialValue(tensors["obstacles"], ArrayRef<bool>{true, false, true});
 
-    tensors["result"] = graph.addVariable(FLOAT, {}, "result");
+    tensors["result"] = graph.addVariable(FLOAT, {2}, "result");
     graph.setTileMapping(tensors["result"], 0);
-    graph.setInitialValue(tensors["result"], 0);
 
     graph.createHostRead("readResult", tensors["result"], false);
 
@@ -112,8 +111,8 @@ TEST(averageVelocity, testMaskedSumPartial) {
     float result[2] = {0.0};
     engine.readTensor("readResult", &result);
 
-    ASSERT_EQ(result[0], 1 + 1000); // the two non-obstacled cells added
-    ASSERT_EQ(result[1], 2); // the count of non-obstacled cells
+    ASSERT_FLOAT_EQ(result[0], 1 + 1000); // the two non-obstacled cells added
+    ASSERT_FLOAT_EQ(result[1], 2); // the count of non-obstacled cells
 
 
 }
@@ -127,7 +126,7 @@ TEST(averageVelocity, testReducePartials) {
     tensors["partials"] = graph.addVariable(FLOAT, {3 * 2}, "partials");
     graph.setTileMapping(tensors["partials"], 0);
     graph.setInitialValue(tensors["partials"], ArrayRef<float>{100, 2, 300, 3, 1, 1});
-    tensors["result"] = graph.addVariable(FLOAT, {}, "result");
+    tensors["result"] = graph.addVariable(FLOAT, {2}, "result");
     graph.setTileMapping(tensors["result"], 0);
 
 
@@ -154,8 +153,8 @@ TEST(averageVelocity, testReducePartials) {
     float result[2] = {0, 0};
     engine.readTensor("readResult", &result);
 
-    ASSERT_EQ(result[0], 100 + 300 + 1);
-    ASSERT_EQ(result[1], 2 + 3 + 1);
+    ASSERT_FLOAT_EQ(result[0], 100 + 300 + 1);
+    ASSERT_FLOAT_EQ(result[1], 2 + 3 + 1);
 
 
 }
@@ -168,10 +167,10 @@ TEST(averageVelocity, testAppendReducedSum) {
     popops::addCodelets(graph);
 
     auto tensors = lbm::TensorMap{};
-    tensors["partials"] = graph.addVariable(FLOAT, {3}, "partials");
+    tensors["partials"] = graph.addVariable(FLOAT, {3 * 2}, "partials");
     graph.setTileMapping(tensors["partials"], 0);
-    graph.setInitialValue(tensors["partials"], ArrayRef<float>{1, 2, 3});
-    tensors["result"] = graph.addVariable(FLOAT, {10}, "result");
+    graph.setInitialValue(tensors["partials"], ArrayRef<float>{10, 5, 2, 1, 3, 9});
+    tensors["result"] = graph.addVariable(FLOAT, {3}, "result");
     graph.setTileMapping(tensors["result"], 0);
     tensors["idx"] = graph.addVariable(UNSIGNED_INT, {}, "idx");
     graph.setTileMapping(tensors["idx"], 0);
@@ -189,10 +188,10 @@ TEST(averageVelocity, testAppendReducedSum) {
     auto v = graph.addVertex(cs,
                              "AppendReducedSum",
                              {
-                                     {"partials",    tensors["partials"].flatten()},
-                                     {"index",       tensors["idx"]},
-                                     {"numPartials", 3},
-                                     {"finals",      tensors["result"].flatten()},
+                                     {"totalAndCountPartials", tensors["partials"].flatten()},
+                                     {"index",                 tensors["idx"]},
+                                     {"numPartials",           3},
+                                     {"finals",                tensors["result"].flatten()},
                              });
     auto reduceProg = Execute(cs);
 
@@ -200,7 +199,7 @@ TEST(averageVelocity, testAppendReducedSum) {
     popops::addInPlace(graph, tensors["idx"], tensors["1"], incrementProg, "idx++");
     popops::addInPlace(graph, tensors["partials"], tensors["1.0"], incrementProg, "partials++");
 
-    auto finalProg = Repeat(10, Sequence{reduceProg, incrementProg});
+    auto finalProg = Repeat(3, Sequence{reduceProg, incrementProg});
 
     graph.setCycleEstimate(v, 1);
     graph.setTileMapping(v, 0);
@@ -209,30 +208,41 @@ TEST(averageVelocity, testAppendReducedSum) {
     engine.load(device);
     engine.run();
 
-    auto result = std::array<float, 10>{0};
+    auto result = std::array<float, 3>{0};
     engine.readTensor("readResult", result.begin(), result.end());
 
-    auto expected = std::array<float, 10>{
-            1 + 2 + 3,
-            2 + 3 + 4,
-            3 + 4 + 5,
-            4 + 5 + 6,
-            5 + 6 + 7,
-            6 + 7 + 8,
-            7 + 8 + 9,
-            8 + 9 + 10,
-            9 + 10 + 11,
-            10 + 11 + 12
+    auto expected = std::array<float, 3>{
+            (10.0 + 2 + 3) / (5 + 1 + 9),
+            (11.0 + 3 + 4) / (6 + 2 + 10),
+            (12.0 + 4 + 5) / (7 + 3 + 11),
+
     };
-    ASSERT_EQ(result, expected);
-}
+    ASSERT_FLOAT_EQ(result[0], expected[0]);
+    ASSERT_FLOAT_EQ(result[1], expected[1]);
+    ASSERT_FLOAT_EQ(result[2], expected[2]);
+};
 
-
+/**
+ * A full end-to-end test of the average velocity operation, in which we
+ * (1) Take an input tensor of cells that is 2x2(x9) mapped onto 2 workers each of 2 tiles
+ * (2) Calculate the normed velocities
+ * (3) Use the obstacles mask and reduce to the partial representing the non-obstacled averages in the worker -> (sum, count)
+ * (4) Reduce the workers' answers per tile -> (sum, count)
+ * (5) Reduce all the tiles' answers and store the result at the end of the results vector
+ *  Then we increment all the cell values (to have different test values) and repeat so that we have a results vector of 3
+ *
+ *  This is similar to how we will track the average velocity at each iteration of the simulation
+ */
 TEST(averageVelocity, testFullAverage) {
     auto device = lbm::getIpuModel();
     auto graph = Graph{device.value().getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
     popops::addCodelets(graph);
+
+    const auto cells = std::vector<float>{1, 2, 3, 4, 5, 6, 7, 8, 9,
+                                          0, 1, 2, 3, 4, 5, 6, 7, 8,
+                                          2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                          2, 3, 4, 5, 6, 7, 8, 9, 10};
 
     auto tensors = lbm::TensorMap{};
     tensors["cells"] = graph.addVariable(FLOAT, {2, 2, 9}, "cells");
@@ -242,17 +252,21 @@ TEST(averageVelocity, testFullAverage) {
                                                             0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                             2, 3, 4, 5, 6, 7, 8, 9, 10,
                                                             2, 3, 4, 5, 6, 7, 8, 9, 10});
+    tensors["velocities"] = graph.addVariable(FLOAT, {2, 2}, "velocities");
+    graph.setTileMapping(tensors["velocities"][0], 0);
+    graph.setTileMapping(tensors["velocities"][1], 1);
+
     tensors["obstacles"] = graph.addVariable(BOOL, {2, 2}, "obstacles");
     graph.setTileMapping(tensors["obstacles"][0], 0);
     graph.setTileMapping(tensors["obstacles"][1], 0);
-    graph.setInitialValue(tensors["obstacles"], ArrayRef<bool>{true, false, true, true});
-    tensors["partialsPerWorker"] = graph.addVariable(FLOAT, {4}, "partialsPerWorker");
-    graph.setTileMapping(tensors["partialsPerWorker"].slice({0, 2}, 0), 0);
-    graph.setTileMapping(tensors["partialsPerWorker"].slice({2, 4}, 0), 1);
-    tensors["partialsPerTile"] = graph.addVariable(FLOAT, {2}, "partialsPerTile");
-    graph.setTileMapping(tensors["partialsPerTile"][0], 0);
-    graph.setTileMapping(tensors["partialsPerTile"][1], 1);
-    tensors["result"] = graph.addVariable(FLOAT, {10}, "result");
+    graph.setInitialValue(tensors["obstacles"], ArrayRef<bool>{true, false, false, true});
+    tensors["partialsPerWorker"] = graph.addVariable(FLOAT, {4 * 2}, "partialsPerWorker");
+    graph.setTileMapping(tensors["partialsPerWorker"].slice({0, 4}, 0), 0);
+    graph.setTileMapping(tensors["partialsPerWorker"].slice({4, 8}, 0), 1);
+    tensors["partialsPerTile"] = graph.addVariable(FLOAT, {2 * 2}, "partialsPerTile");
+    graph.setTileMapping(tensors["partialsPerTile"].slice(0, 2, 0), 0);
+    graph.setTileMapping(tensors["partialsPerTile"].slice(2, 4, 0), 1);
+    tensors["result"] = graph.addVariable(FLOAT, {3}, "result");
     graph.setTileMapping(tensors["result"], 0);
     tensors["idx"] = graph.addVariable(UNSIGNED_INT, {}, "idx");
     graph.setTileMapping(tensors["idx"], 0);
@@ -265,18 +279,37 @@ TEST(averageVelocity, testFullAverage) {
     graph.createHostRead("readResult", tensors["result"], false);
 
 
-    auto maskedSumCs = graph.addComputeSet("test");
+    auto velocitiesCs = graph.addComputeSet("velocitiesCs");
 
+    for (size_t i = 0; i < 4; i++) {
+
+        auto v = graph.addVertex(velocitiesCs,
+                                 "NormedVelocityVertex",
+                                 {
+                                         {"cells",    tensors["cells"][i / 2][i % 2]},
+                                         {"numCells", 1},
+                                         {"vels",     tensors["velocities"].slice({i / 2, i % 2},
+                                                                                  {i / 2 + 1, i % 2 + 1}).flatten()},
+                                 });
+
+        graph.setCycleEstimate(v, 1);
+        graph.setTileMapping(v, i / 2);
+    }
+    auto maskedSumCs = graph.addComputeSet("test");
 
     for (size_t i = 0; i < 4; i++) {
         auto v = graph.addVertex(maskedSumCs,
                                  "MaskedSumPartial",
                                  {
-                                         {"cells",     tensors["cells"][i / 2][i % 2]},
-                                         {"obstacles", tensors["obstacles"].slice({i / 2, i % 2},
-                                                                                  {i / 2 + 1, i % 2 + 1}).flatten()},
-                                         {"numCells",  1},
-                                         {"out",       tensors["partialsPerWorker"][i]},
+                                         {"velocities",    tensors["velocities"].slice({i / 2, i % 2},
+                                                                                       {i / 2 + 1,
+                                                                                        i % 2 + 1}).flatten()},
+                                         {"obstacles",     tensors["obstacles"].slice({i / 2, i % 2},
+                                                                                      {i / 2 + 1,
+                                                                                       i % 2 + 1}).flatten()},
+                                         {"numCells",      1},
+                                         {"totalAndCount", tensors["partialsPerWorker"].slice(i * 2, i * 2 + 1,
+                                                                                              0).flatten()},
                                  });
 
         graph.setCycleEstimate(v, 1);
@@ -290,10 +323,12 @@ TEST(averageVelocity, testFullAverage) {
         auto v = graph.addVertex(partialReduceCs,
                                  "ReducePartials",
                                  {
-                                         {"partials",    tensors["partialsPerWorker"].slice({i * 2, i * 2 + 2},
-                                                                                            0).flatten()},
-                                         {"numPartials", 2},
-                                         {"out",         tensors["partialsPerTile"][i]},
+                                         {"totalAndCountPartials", tensors["partialsPerWorker"].slice(
+                                                 {i * 4, i * 4 + 4},
+                                                 0).flatten()},
+                                         {"numPartials",           2},
+                                         {"totalAndCount",         tensors["partialsPerTile"].slice(i * 2, i * 2 + 1,
+                                                                                                    0).flatten()},
                                  });
 
 
@@ -306,33 +341,66 @@ TEST(averageVelocity, testFullAverage) {
     auto v = graph.addVertex(appendReduceCs,
                              "AppendReducedSum",
                              {
-                                     {"partials",    tensors["partialsPerTile"].flatten()},
-                                     {"index",       tensors["idx"]},
-                                     {"numPartials", 2},
-                                     {"finals",      tensors["result"].flatten()},
+                                     {"totalAndCountPartials", tensors["partialsPerTile"].flatten()},
+                                     {"index",                 tensors["idx"]},
+                                     {"numPartials",           2},
+                                     {"finals",                tensors["result"].flatten()},
                              });
     graph.setCycleEstimate(v, 1);
     graph.setTileMapping(v, 0);
 
-    auto reduceProg = Sequence{Execute(maskedSumCs), Execute(partialReduceCs), Execute(appendReduceCs)};
+    auto reduceProg = Sequence{Execute(velocitiesCs), Execute(maskedSumCs), Execute(partialReduceCs),
+                               Execute(appendReduceCs)};
 
     auto incrementProg = Sequence();
     popops::addInPlace(graph, tensors["idx"], tensors["1"], incrementProg, "idx++");
     popops::addInPlace(graph, tensors["cells"], tensors["1.0"], incrementProg, "cells++");
 
-    auto finalProg = Repeat(10, Sequence{reduceProg, incrementProg});
+    auto finalProg = Repeat(3, Sequence{reduceProg, incrementProg,
+                                        PrintTensor(tensors["cells"]),
+                                        PrintTensor(tensors["velocities"]),
+                                        PrintTensor(tensors["partialsPerWorker"]),
+                                        PrintTensor(tensors["partialsPerTile"]),
+                                        PrintTensor(tensors["result"]),
+    });
 
     auto engine = lbm::createDebugEngine(graph, {finalProg});
     engine.load(device.value());
     engine.run();
 
-    auto result = std::array<float, 10>{0};
+    auto result = std::array<float, 3>{0};
     engine.readTensor("readResult", result.begin(), result.end());
 
-    auto expected = std::array<float, 10>{
-            153, 180, 207, 234, 261, 288, 315, 342, 369, 396
+
+    auto velocityFn = [](const int offset, const std::vector<float> &cell) -> float {
+        auto bump = offset * 9;
+        auto local_density = cell[bump + 0] + cell[bump + 1] + cell[bump + 2] + cell[bump + 3] + cell[bump + 4] +
+                             cell[bump + 5] + cell[bump + 6] + cell[bump + 7] + cell[bump + 8];
+        auto ux = (cell[bump + 1] + cell[bump + 5] + cell[bump + 8] -
+                   (cell[bump + 3] + cell[bump + 6] + cell[bump + 7])) / local_density;
+        auto uy = (cell[bump + 2] + cell[bump + 5] + cell[bump + 6] -
+                   (cell[bump + 4] + cell[bump + 7] + cell[bump + 8])) / local_density;
+        return sqrtf(ux * ux + uy * uy);
     };
-    ASSERT_EQ(result, expected);
+
+    auto averageVelocityFn = [&velocityFn](
+            const std::vector<float> &cells) -> float { // Remember only the middle 2 are not obstacles
+        return (velocityFn(0, cells) * 0 +
+                velocityFn(1, cells) * 1 +
+                velocityFn(3, cells) * 1 +
+                velocityFn(5, cells) * 0) / 2;
+    };
+
+    auto cells1 = std::vector<float>(4 * 9);
+    auto cells2 = std::vector<float>(4 * 9);
+
+    auto incrementFn = [](float a) -> float { return a + 1; };
+    std::transform(cells.begin(), cells.end(), cells1.begin(), incrementFn);
+    std::transform(cells.begin(), cells.end(), cells2.begin(), incrementFn);
+
+    ASSERT_FLOAT_EQ(result[0], averageVelocityFn(cells));
+    ASSERT_FLOAT_EQ(result[1], averageVelocityFn(cells1));
+    ASSERT_FLOAT_EQ(result[2], averageVelocityFn(cells2));
 }
 
 
@@ -414,82 +482,82 @@ TEST(accelerate, testAccelerateVertex) {
 
 }
 
-
-TEST(propagate, testPropagateVertex) {
-    auto device = poplar::Device::createCPUDevice();
-    auto graph = Graph{device.getTarget()};
-    graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
-
-    auto nx = 3u;
-    auto ny = 2u;
-    auto accel = 1u;
-    auto density = 9u;
-
-    tensors["cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "cells");
-    graph.setTileMapping(tensors["cells"], 0);
-    graph.setInitialValue(tensors["cells"],
-                          ArrayRef<float>{1, 0.5, 1, 1, 1, 1, 1, 1, 1,
-                                          0, 1, 2, 3, 4, 5, 6, 7, 8,
-                                          0, 1, 2, 3, 4, 5, 6, 7, 8,
-                                          2, 3, 4, 5, 6, 7, 8, 9, 10,
-                                          2, 3, 4, 5, 6, 7, 8, 9, 10,
-                                          2, 3, 4, 5, 6, 7, 8, 9, 10});
-    tensors["obstacles"] = graph.addVariable(BOOL, {ny, nx}, "obstacles");
-    graph.setTileMapping(tensors["obstacles"], 0);
-    graph.setInitialValue(tensors["obstacles"],
-                          ArrayRef<bool>{
-                                  false, true, false,
-                                  false, true, true});
-
-    graph.createHostRead("readCells", tensors["cells"], false);
-
-
-    auto cs = graph.addComputeSet("test");
-
-    auto v = graph.addVertex(cs,
-                             "AccelerateFlowVertex",
-                             {
-                                     {"cellsInSecondRow",     tensors["cells"][ny - 2].flatten()},
-                                     {"obstaclesInSecondRow", tensors["obstacles"][ny - 2].flatten()},
-                                     {"density",              density},
-                                     {"partitionWidth",       nx},
-                                     {"accel",                accel},
-                             });
-
-    graph.setCycleEstimate(v, 1);
-    graph.setTileMapping(v, 0);
-
-    auto prog = Sequence(Execute(cs)
-//            PrintTensor(tensors["cells"])
-    );
-    auto engine = lbm::createDebugEngine(graph, {prog});
-    engine.load(device);
-    engine.run();
-
-    auto cells = std::array<std::array<std::array<float, 9>, 3>, 2>();
-    engine.readTensor("readCells", &cells);
-
-    const auto w1 = 1.0f;
-    const auto w2 = 0.25f;
-    // w1 = 1, w2 = 0.25 Should not update when when cell is obstacle everything in row 2!)
-    auto expected = std::array<std::array<std::array<float, 9>, 3>, 2>();
-    expected[0][0] = {1, 0.5, 1, 1, 1, 1, 1, 1, 1}; // doesn't change because of negative conditions
-    expected[0][1] = {0, 1, 2, 3, 4, 5, 6, 7, 8}; // doesn't change because obstacle
-    expected[0][2] = {0, 1 + w1, 2, 3 - w1, 4, 5 + w2,
-                      6 - w2, 7 - w2,
-                      8 + w2}; // does change
-    expected[1][0] = {2, 3, 4, 5, 6, 7, 8, 9, 10}; // these don't change (only 2nd row from bottom)
-    expected[1][1] = {2, 3, 4, 5, 6, 7, 8, 9, 10};  // these don't change (only 2nd row from bottom)
-    expected[1][2] = {2, 3, 4, 5, 6, 7, 8, 9, 10};// these don't change (only 2nd row from bottom)
-
-    ASSERT_EQ(cells[0][0], expected[0][0]) << "cells[0,0,:] doesn't change because of negative conditions";
-    ASSERT_EQ(cells[0][1], expected[0][1]) << "cells[0,1,:] doesn't change because obstacle";
-    ASSERT_EQ(cells[0][2], expected[0][2]) << "cells[0,2,:] does change";
-    ASSERT_EQ(cells[1][0], expected[1][0]) << "cells[1,0,:] no change (only 2nd row from bottom)";
-    ASSERT_EQ(cells[1][1], expected[1][1]) << "cells[1,1,:] no change (only 2nd row from bottom)";
-    ASSERT_EQ(cells[1][2], expected[1][2]) << "cells[1,2,:] no change (only 2nd row from bottom)";
-
-
-}
-
+//
+//TEST(propagate, testPropagateVertex) {
+//    auto device = poplar::Device::createCPUDevice();
+//    auto graph = Graph{device.getTarget()};
+//    graph.addCodelets("D2Q9Codelets.cpp");
+//    auto tensors = lbm::TensorMap{};
+//
+//    auto nx = 3u;
+//    auto ny = 2u;
+//    auto accel = 1u;
+//    auto density = 9u;
+//
+//    tensors["cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "cells");
+//    graph.setTileMapping(tensors["cells"], 0);
+//    graph.setInitialValue(tensors["cells"],
+//                          ArrayRef<float>{1, 0.5, 1, 1, 1, 1, 1, 1, 1,
+//                                          0, 1, 2, 3, 4, 5, 6, 7, 8,
+//                                          0, 1, 2, 3, 4, 5, 6, 7, 8,
+//                                          2, 3, 4, 5, 6, 7, 8, 9, 10,
+//                                          2, 3, 4, 5, 6, 7, 8, 9, 10,
+//                                          2, 3, 4, 5, 6, 7, 8, 9, 10});
+//    tensors["obstacles"] = graph.addVariable(BOOL, {ny, nx}, "obstacles");
+//    graph.setTileMapping(tensors["obstacles"], 0);
+//    graph.setInitialValue(tensors["obstacles"],
+//                          ArrayRef<bool>{
+//                                  false, true, false,
+//                                  false, true, true});
+//
+//    graph.createHostRead("readCells", tensors["cells"], false);
+//
+//
+//    auto cs = graph.addComputeSet("test");
+//
+//    auto v = graph.addVertex(cs,
+//                             "AccelerateFlowVertex",
+//                             {
+//                                     {"cellsInSecondRow",     tensors["cells"][ny - 2].flatten()},
+//                                     {"obstaclesInSecondRow", tensors["obstacles"][ny - 2].flatten()},
+//                                     {"density",              density},
+//                                     {"partitionWidth",       nx},
+//                                     {"accel",                accel},
+//                             });
+//
+//    graph.setCycleEstimate(v, 1);
+//    graph.setTileMapping(v, 0);
+//
+//    auto prog = Sequence(Execute(cs)
+////            PrintTensor(tensors["cells"])
+//    );
+//    auto engine = lbm::createDebugEngine(graph, {prog});
+//    engine.load(device);
+//    engine.run();
+//
+//    auto cells = std::array<std::array<std::array<float, 9>, 3>, 2>();
+//    engine.readTensor("readCells", &cells);
+//
+//    const auto w1 = 1.0f;
+//    const auto w2 = 0.25f;
+//    // w1 = 1, w2 = 0.25 Should not update when when cell is obstacle everything in row 2!)
+//    auto expected = std::array<std::array<std::array<float, 9>, 3>, 2>();
+//    expected[0][0] = {1, 0.5, 1, 1, 1, 1, 1, 1, 1}; // doesn't change because of negative conditions
+//    expected[0][1] = {0, 1, 2, 3, 4, 5, 6, 7, 8}; // doesn't change because obstacle
+//    expected[0][2] = {0, 1 + w1, 2, 3 - w1, 4, 5 + w2,
+//                      6 - w2, 7 - w2,
+//                      8 + w2}; // does change
+//    expected[1][0] = {2, 3, 4, 5, 6, 7, 8, 9, 10}; // these don't change (only 2nd row from bottom)
+//    expected[1][1] = {2, 3, 4, 5, 6, 7, 8, 9, 10};  // these don't change (only 2nd row from bottom)
+//    expected[1][2] = {2, 3, 4, 5, 6, 7, 8, 9, 10};// these don't change (only 2nd row from bottom)
+//
+//    ASSERT_EQ(cells[0][0], expected[0][0]) << "cells[0,0,:] doesn't change because of negative conditions";
+//    ASSERT_EQ(cells[0][1], expected[0][1]) << "cells[0,1,:] doesn't change because obstacle";
+//    ASSERT_EQ(cells[0][2], expected[0][2]) << "cells[0,2,:] does change";
+//    ASSERT_EQ(cells[1][0], expected[1][0]) << "cells[1,0,:] no change (only 2nd row from bottom)";
+//    ASSERT_EQ(cells[1][1], expected[1][1]) << "cells[1,1,:] no change (only 2nd row from bottom)";
+//    ASSERT_EQ(cells[1][2], expected[1][2]) << "cells[1,2,:] no change (only 2nd row from bottom)";
+//
+//
+//}
+//

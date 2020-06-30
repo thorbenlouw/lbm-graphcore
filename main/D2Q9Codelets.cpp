@@ -13,29 +13,30 @@ constexpr auto NumSpeeds = 9u;
  */
 class NormedVelocityVertex : public Vertex {
 public:
-    Input <Vector<float, VectorLayout::ONE_PTR, 4, false>> cells; // 9 speeds in every cell
+    Input <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> cells; // 9 speeds in every cell
+    Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> vels; // 1 velocity for every cell
     Input<unsigned> numCells;
-    Output <Vector<float, VectorLayout::ONE_PTR, 4, false>> vels; // 1 velocity for every cell
 
     bool compute() {
+        const uint16_t n = (uint16_t) * numCells;
 
-        for (auto i = 0; i < *numCells; i++) {
-            auto cellIdx = i * numCells;
-            auto c0 = cells[cellIdx + 0];
-            auto c1 = cells[cellIdx + 1];
-            auto c2 = cells[cellIdx + 2];
-            auto c3 = cells[cellIdx + 3];
-            auto c4 = cells[cellIdx + 4];
-            auto c5 = cells[cellIdx + 5];
-            auto c6 = cells[cellIdx + 6];
-            auto c7 = cells[cellIdx + 7];
-            auto c8 = cells[cellIdx + 8];
+        auto cellAddress = reinterpret_cast<float2 *>(&cells[0]);
 
-            auto local_density = c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
-            auto u_x = (c1 + c5 + c8 - c3 - c6 - c7) / local_density;
-            auto u_y = (c2 + c5 + c6 - c4 - c7 - c8) / local_density;
+        for (auto i = 0; i < n; i++) {
+            auto cellAddress = reinterpret_cast<float2 *>(&cells[i * NumSpeeds]);
+
+            auto c01 = *cellAddress;
+            auto c23 = *(cellAddress + 1);
+            auto c45 = *(cellAddress + 2);
+            auto c67 = *(cellAddress + 3);
+            auto c8X = *(cellAddress + 4);
+
+            auto local_density_partial = c01 + c23 + c45 + c67 + float2{c8X[0], 0};
+            auto local_density = local_density_partial[0] + local_density_partial[1];
+
+            auto u_x = (c01[1] + c45[1] + c8X[0] - c23[1] - c67[0] - c67[1]) / local_density;
+            auto u_y = (c23[0] + c45[1] + c67[0] - c45[0] - c67[1] - c8X[0]) / local_density;
             vels[i] = sqrtf((u_x * u_x) + (u_y * u_y));
-
         }
         return true;
     }
@@ -48,16 +49,18 @@ class MaskedSumPartial : public Vertex { // On each worker, reduce the cells
 
 public:
     Input <Vector<float, VectorLayout::ONE_PTR, 4, false>> velocities;
-    Input <Vector<bool>> obstacles;
+    Input <Vector<bool, VectorLayout::ONE_PTR, 4, false>> obstacles;
     Input<unsigned> numCells;
     Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> totalAndCount;
 
     bool compute() {
+        const uint16_t n = (uint16_t) * numCells;
+
         auto count = 0.0f;
         auto tmp = 0.0f;
-        for (auto i = 0; i < *numCells; i++) {
-            tmp += velocities[i] * obstacles[i];
-            count += obstacles[i];
+        for (auto i = 0; i < n; i++) {
+            tmp += velocities[i] * (1 - obstacles[i]); // only if not obstacle
+            count += (1 - obstacles[i]); // only if not obstacle
         }
         float2 *f2out = reinterpret_cast<float2 *>(&totalAndCount[0]);
         f2out[0] = {tmp, count};
@@ -71,14 +74,14 @@ public:
  */
 class ReducePartials : public Vertex { // Take the partials within a tile and reduce them
 public:
-    Input <Vector<float, VectorLayout::SCALED_PTR64, 8>> totalAndCountPartials;
+    Input <Vector<float, VectorLayout::SCALED_PTR32, 4>> totalAndCountPartials;
     Input<unsigned> numPartials;
     Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> totalAndCount;
 
     bool compute() {
         float2 tmp = {0.0f, 0.0f};
 
-        for (int i = 0; i < *numPartials / 2; i++) {
+        for (int i = 0; i < *numPartials; i++) {
             tmp += *reinterpret_cast<float2 *>(&totalAndCountPartials[i * 2]);
         }
         float2 *f2out = reinterpret_cast<float2 *>(&totalAndCount[0]);
@@ -102,7 +105,7 @@ public:
     bool compute() {
 
         float2 tmp = {0.0f, 0.0f};
-        for (auto i = 0u; i < *numPartials / 2; i++) {
+        for (auto i = 0u; i < *numPartials; i++) {
             tmp += *reinterpret_cast<float2 *>(&totalAndCountPartials[i * 2]);
         }
         finals[*index] = tmp[0] / tmp[1];
@@ -146,45 +149,45 @@ public:
     }
 };
 
-//class PropagateVertex : public Vertex {
-//
-//public:
-//    Input <Vector<float>> in; // 9 speeds in every cell - this includes the halo
-//    Input<unsigned> numRows; // Including halo
-//    Input<unsigned> numCols; // Including halo
-//    Input <Vector<float>> out; // 9 speeds in every cell - this includes the halo
-//
-//    bool compute() {
-//        for (size_t jj = 1; jj < *numRows - 1; jj++) // don't loop through halo
-//        {
-//            for (size_t ii = 1; ii < *numCols - 1; ii++) {
-//                auto cellIdx = jj * (numCols * NumSpeeds) + ii * NumSpeeds;
-//                // We don't have to worry about wraparound and edges because the input vector already has the halo
-//                auto northIdx = cellIdx + (numCols * NumSpeeds); // Remember layout is (0,0) = bottom left
-//                auto southIdx = cellIdx - (numCols * NumSpeeds);
-//                auto eastIdx = cellIdx + NumSpeeds;
-//                auto westIdx = cellIdx - NumSpeeds;
-//                auto nwIdx = northIdx - NumSpeeds;
-//                auto neIdx = northIdx + NumSpeeds;
-//                auto seIdx = southIdx + NumSpeeds;
-//                auto swIdx = southIdx - NumSpeeds;
-//
-//                /* propagate densities from neighbouring cells, following
-//                ** appropriate directions of travel and writing into
-//                ** scratch space grid */
-//                out[cellIdx] = in[cellIdx]; /* central cell, no movement */
-//                out[cellIdx + 1] = in[eastIdx + 1]; /* east */
-//                out[cellIdx + 2] = in[northIdx + 2]; /* north */
-//                out[cellIdx + 3] = in[westIdx + 3]; /* west */
-//                out[cellIdx + 4] = in[southIdx + 4]; /* south */
-//                out[cellIdx + 5] = in[neIdx + 5]; /* north-east */
-//                out[cellIdx + 6] = in[nwIdx + 6]; /* north-west */
-//                out[cellIdx + 7] = in[swIdx + 7]; /* south-west */
-//                out[cellIdx + 8] = in[seIdx + 8]; /* south-east */
-//            }
-//        }
-//    }
-//};
+class PropagateVertex : public Vertex {
+
+public:
+    Input <Vector<float>> in; // 9 speeds in every cell - this includes the halo
+    Input<unsigned> numRows; // Including halo
+    Input<unsigned> numCols; // Including halo
+    Input <Vector<float>> out; // 9 speeds in every cell - this includes the halo
+
+    bool compute() {
+        for (size_t jj = 1; jj < *numRows - 1; jj++) // don't loop through halo
+        {
+            for (size_t ii = 1; ii < *numCols - 1; ii++) {
+                auto cellIdx = jj * (numCols * NumSpeeds) + ii * NumSpeeds;
+                // We don't have to worry about wraparound and edges because the input vector already has the halo
+                auto northIdx = cellIdx + (numCols * NumSpeeds); // Remember layout is (0,0) = bottom left
+                auto southIdx = cellIdx - (numCols * NumSpeeds);
+                auto eastIdx = cellIdx + NumSpeeds;
+                auto westIdx = cellIdx - NumSpeeds;
+                auto nwIdx = northIdx - NumSpeeds;
+                auto neIdx = northIdx + NumSpeeds;
+                auto seIdx = southIdx + NumSpeeds;
+                auto swIdx = southIdx - NumSpeeds;
+
+                /* propagate densities from neighbouring cells, following
+                ** appropriate directions of travel and writing into
+                ** scratch space grid */
+                out[cellIdx] = in[cellIdx]; /* central cell, no movement */
+                out[cellIdx + 1] = in[eastIdx + 1]; /* east */
+                out[cellIdx + 2] = in[northIdx + 2]; /* north */
+                out[cellIdx + 3] = in[westIdx + 3]; /* west */
+                out[cellIdx + 4] = in[southIdx + 4]; /* south */
+                out[cellIdx + 5] = in[neIdx + 5]; /* north-east */
+                out[cellIdx + 6] = in[nwIdx + 6]; /* north-west */
+                out[cellIdx + 7] = in[swIdx + 7]; /* south-west */
+                out[cellIdx + 8] = in[seIdx + 8]; /* south-east */
+            }
+        }
+    }
+};
 
 //class ReboundVertex : public Vertex {
 //
