@@ -1,70 +1,111 @@
 #include <poplar/Vertex.hpp>
 #include <cstddef>
 #include <print.h>
+#include <math.h>
+#include <ipudef.h>
 
 using namespace poplar;
 
 constexpr auto NumSpeeds = 9u;
 
+/**
+ * Convert the 9 directional speed distributions to a normed velocity
+ */
+class NormedVelocityVertex : public Vertex {
+public:
+    Input <Vector<float, VectorLayout::ONE_PTR, 4, false>> cells; // 9 speeds in every cell
+    Input<unsigned> numCells;
+    Output <Vector<float, VectorLayout::ONE_PTR, 4, false>> vels; // 1 velocity for every cell
+
+    bool compute() {
+
+        for (auto i = 0; i < *numCells; i++) {
+            auto cellIdx = i * numCells;
+            auto c0 = cells[cellIdx + 0];
+            auto c1 = cells[cellIdx + 1];
+            auto c2 = cells[cellIdx + 2];
+            auto c3 = cells[cellIdx + 3];
+            auto c4 = cells[cellIdx + 4];
+            auto c5 = cells[cellIdx + 5];
+            auto c6 = cells[cellIdx + 6];
+            auto c7 = cells[cellIdx + 7];
+            auto c8 = cells[cellIdx + 8];
+
+            auto local_density = c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
+            auto u_x = (c1 + c5 + c8 - c3 - c6 - c7) / local_density;
+            auto u_y = (c2 + c5 + c6 - c4 - c7 - c8) / local_density;
+            vels[i] = sqrtf((u_x * u_x) + (u_y * u_y));
+
+        }
+        return true;
+    }
+};
+
+/**
+ * For each velocity, if it is not masked, count it and add its velocity to the total
+ */
 class MaskedSumPartial : public Vertex { // On each worker, reduce the cells
 
 public:
-    Input <Vector<float>> cells; // 9 speeds in every cell
+    Input <Vector<float, VectorLayout::ONE_PTR, 4, false>> velocities;
     Input <Vector<bool>> obstacles;
     Input<unsigned> numCells;
-    Output<float> out;
+    Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> totalAndCount;
 
     bool compute() {
-        const auto cellContribution = [this](int i) -> float {
-            auto mask = obstacles[i];
-            auto s = 0.0f;
-#pragma unroll 9
-            for (int j = 0; j < 9; j++) {
-                s += cells[i * 9 + j];
-            }
-            return mask * s;
-        };
+        auto count = 0.0f;
         auto tmp = 0.0f;
         for (auto i = 0; i < *numCells; i++) {
-            tmp += cellContribution(i);
+            tmp += velocities[i] * obstacles[i];
+            count += obstacles[i];
         }
-        *out = tmp;
-
+        float2 *f2out = reinterpret_cast<float2 *>(&totalAndCount[0]);
+        f2out[0] = {tmp, count};
         return true;
     }
 };
 
 
+/**
+ * Take a partial list of velocities and their counts and return one total velocity and total count
+ */
 class ReducePartials : public Vertex { // Take the partials within a tile and reduce them
 public:
-    Input <Vector<float>> partials;
+    Input <Vector<float, VectorLayout::SCALED_PTR64, 8>> totalAndCountPartials;
     Input<unsigned> numPartials;
-    Output<float> out;
+    Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> totalAndCount;
 
     bool compute() {
-        auto tmp = 0.0f;
-        for (int i = 0; i < *numPartials; i++)
-            tmp += partials[i];
-        *out = tmp;
+        float2 tmp = {0.0f, 0.0f};
+
+        for (int i = 0; i < *numPartials / 2; i++) {
+            tmp += *reinterpret_cast<float2 *>(&totalAndCountPartials[i * 2]);
+        }
+        float2 *f2out = reinterpret_cast<float2 *>(&totalAndCount[0]);
+        f2out[0] = tmp;
         return true;
     }
 };
 
+/**
+ * Take a partial list of velocities and their counts, determine the  total velocity and total count, and then
+ * record the average (total/count) at the given index in the array
+ */
 class AppendReducedSum : public Vertex { // Reduce the per-tile partial sums and append to the average list
 
 public:
-    Input <Vector<float>> partials;
+    Input <Vector<float, VectorLayout::SCALED_PTR64, 8>> totalAndCountPartials;
     Input<unsigned> index;
     Input<unsigned> numPartials;
-    Output <Vector<float>> finals;
+    Output <Vector<float, VectorLayout::SCALED_PTR32, 4>> finals;
 
     bool compute() {
 
-        auto tmp = 0.0f;
-        for (auto i = 0; i < *numPartials; i++) {
-            tmp += partials[i];
+        float2 tmp = {0.0f, 0.0f};
+        for (auto i = 0u; i < *numPartials / 2; i++) {
+            tmp += *reinterpret_cast<float2 *>(&totalAndCountPartials[i * 2]);
         }
-        finals[*index] = tmp;
+        finals[*index] = tmp[0] / tmp[1];
 
         return true;
     }
@@ -144,7 +185,7 @@ public:
 //        }
 //    }
 //};
-//
+
 //class ReboundVertex : public Vertex {
 //
 //public:

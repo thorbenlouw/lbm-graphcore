@@ -53,11 +53,11 @@ namespace lbm {
         executionOfs.close();
     }
 
-    auto getIpuDevice() -> std::optional<Device> {
+    auto getIpuDevice(unsigned int numIpus = 1) -> std::optional<Device> {
         DeviceManager manager = DeviceManager::createDeviceManager();
 
         // Attempt to connect to a single IPU
-        for (auto &d : manager.getDevices(poplar::TargetType::IPU, 1)) {
+        for (auto &d : manager.getDevices(poplar::TargetType::IPU, numIpus)) {
             std::cerr << "Trying to attach to IPU " << d.getId();
             if (d.attach()) {
                 std::cerr << " - attached" << std::endl;
