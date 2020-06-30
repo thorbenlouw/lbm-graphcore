@@ -1,5 +1,6 @@
 #include <poplar/Vertex.hpp>
 #include <cstddef>
+#include <print.h>
 
 using namespace poplar;
 
@@ -68,41 +69,42 @@ public:
         return true;
     }
 };
-//
-//class AccelerateFlowVertex : public Vertex {
-//
-//public:
-//    Input <Vector<float>> cellsInSecondRow; // 9 speeds in every cell, no halo
-//    Input <Vector<bool>> obstaclesInSecondRow;
-//    Input<unsigned> partitionWidth;
-//    Input<float> density;
-//    Input<float> accel;
-//
-//    bool compute() {
-//        float w1 = *density * *accel / 9.f;
-//        float w2 = *density * *accel / 36.f;
-//        for (auto col = 0u; col < *partitionWidth; col++) {
-//            auto cellOffset = NumSpeeds * col;
-//
-//            /* if the cell is not occupied and we don't send a negative density */
-//            if (!obstaclesInSecondRow[col]
-//                && (cellsInSecondRow[cellOffset + 3] - w1) > 0.f
-//                && (cellsInSecondRow[cellOffset + 6] - w2) > 0.f
-//                && (cellsInSecondRow[cellOffset + 7] - w2) > 0.f) {
-//                /* increase 'east-side' densities */
-//                cellsInSecondRow[cellOffset + 1] += w1;
-//                cellsInSecondRow[cellOffset + 5] += w2;
-//                cellsInSecondRow[cellOffset + 8] += w2;
-//                /* decrease 'west-side' densities */
-//                cellsInSecondRow[cellOffset + 3] -= w1;
-//                cellsInSecondRow[cellOffset + 6] -= w2;
-//                cellsInSecondRow[cellOffset + 7] -= w2;
-//            }
-//        }
-//        return true;
-//    }
-//};
-//
+
+class AccelerateFlowVertex : public Vertex {
+
+public:
+    Input <Vector<float>> cellsInSecondRow; // 9 speeds in every cell, no halo
+    Input <Vector<bool>> obstaclesInSecondRow;
+    Input<unsigned> partitionWidth;
+    Input<float> density;
+    Input<float> accel;
+
+    bool compute() {
+        float w1 = *density * *accel / 9.f;
+        float w2 = *density * *accel / 36.f;
+
+        for (auto col = 0u; col < *partitionWidth; col++) {
+            auto cellOffset = NumSpeeds * col;
+
+            /* if the cell is not occupied and we don't send a negative density */
+            if (!obstaclesInSecondRow[col]
+                && (cellsInSecondRow[cellOffset + 3] - w1) > 0.f
+                && (cellsInSecondRow[cellOffset + 6] - w2) > 0.f
+                && (cellsInSecondRow[cellOffset + 7] - w2) > 0.f) {
+                /* increase 'east-side' densities */
+                cellsInSecondRow[cellOffset + 1] += w1;
+                cellsInSecondRow[cellOffset + 5] += w2;
+                cellsInSecondRow[cellOffset + 8] += w2;
+                /* decrease 'west-side' densities */
+                cellsInSecondRow[cellOffset + 3] -= w1;
+                cellsInSecondRow[cellOffset + 6] -= w2;
+                cellsInSecondRow[cellOffset + 7] -= w2;
+            }
+        }
+        return true;
+    }
+};
+
 //class PropagateVertex : public Vertex {
 //
 //public:

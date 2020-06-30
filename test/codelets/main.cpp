@@ -281,4 +281,83 @@ TEST(averageVelocity, testFullAverage) {
 }
 
 
+TEST(accelerate, testAccelerateVertex) {
+    auto device = poplar::Device::createCPUDevice();
+    auto graph = Graph{device.getTarget()};
+    graph.addCodelets("D2Q9Codelets.cpp");
+    auto tensors = lbm::TensorMap{};
+
+    auto nx = 3u;
+    auto ny = 2u;
+    auto accel = 1u;
+    auto density = 9u;
+
+    tensors["cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "cells");
+    graph.setTileMapping(tensors["cells"], 0);
+    graph.setInitialValue(tensors["cells"],
+                          ArrayRef<float>{1, 0.5, 1, 1, 1, 1, 1, 1, 1,
+                                          0, 1, 2, 3, 4, 5, 6, 7, 8,
+                                          0, 1, 2, 3, 4, 5, 6, 7, 8,
+                                          2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                          2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                          2, 3, 4, 5, 6, 7, 8, 9, 10});
+    tensors["obstacles"] = graph.addVariable(BOOL, {ny, nx}, "obstacles");
+    graph.setTileMapping(tensors["obstacles"], 0);
+    graph.setInitialValue(tensors["obstacles"],
+                          ArrayRef<bool>{
+                                  false, true, false,
+                                  false, true, true});
+
+    graph.createHostRead("readCells", tensors["cells"], false);
+
+
+    auto cs = graph.addComputeSet("test");
+
+    auto v = graph.addVertex(cs,
+                             "AccelerateFlowVertex",
+                             {
+                                     {"cellsInSecondRow",     tensors["cells"][ny - 2].flatten()},
+                                     {"obstaclesInSecondRow", tensors["obstacles"][ny - 2].flatten()},
+                                     {"density",              density},
+                                     {"partitionWidth",       nx},
+                                     {"accel",                accel},
+                             });
+
+    graph.setCycleEstimate(v, 1);
+    graph.setTileMapping(v, 0);
+
+    auto prog = Sequence(Execute(cs)
+//            PrintTensor(tensors["cells"])
+    );
+    auto engine = lbm::createDebugEngine(graph, {prog});
+    engine.load(device);
+    engine.run();
+
+    auto cells = std::array<std::array<std::array<float, 9>, 3>, 2>();
+    engine.readTensor("readCells", &cells);
+
+    const auto w1 = 1.0f;
+    const auto w2 = 0.25f;
+    // w1 = 1, w2 = 0.25 Should not update when when cell is obstacle everything in row 2!)
+    auto expected = std::array<std::array<std::array<float, 9>, 3>, 2>();
+    expected[0][0] = {1, 0.5, 1, 1, 1, 1, 1, 1, 1}; // doesn't change because of negative conditions
+    expected[0][1] = {0, 1, 2, 3, 4, 5, 6, 7, 8}; // doesn't change because obstacle
+    expected[0][2] = {0, 1 + w1, 2, 3 - w1, 4, 5 + w2,
+                      6 - w2, 7 - w2,
+                      8 + w2}; // does change
+    expected[1][0] = {2, 3, 4, 5, 6, 7, 8, 9, 10}; // these don't change (only 2nd row from bottom)
+    expected[1][1] = {2, 3, 4, 5, 6, 7, 8, 9, 10};  // these don't change (only 2nd row from bottom)
+    expected[1][2] = {2, 3, 4, 5, 6, 7, 8, 9, 10};// these don't change (only 2nd row from bottom)
+
+    ASSERT_EQ(cells[0][0], expected[0][0]) << "cells[0,0,:] doesn't change because of negative conditions";
+    ASSERT_EQ(cells[0][1], expected[0][1]) << "cells[0,1,:] doesn't change because obstacle";
+    ASSERT_EQ(cells[0][2], expected[0][2]) << "cells[0,2,:] does change";
+    ASSERT_EQ(cells[1][0], expected[1][0]) << "cells[1,0,:] no change (only 2nd row from bottom)";
+    ASSERT_EQ(cells[1][1], expected[1][1]) << "cells[1,1,:] no change (only 2nd row from bottom)";
+    ASSERT_EQ(cells[1][2], expected[1][2]) << "cells[1,2,:] no change (only 2nd row from bottom)";
+
+
+}
+
+
 
