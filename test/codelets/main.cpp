@@ -387,8 +387,8 @@ TEST(averageVelocity, testFullAverage) {
             const std::vector<float> &cells) -> float { // Remember only the middle 2 are not obstacles
         return (velocityFn(0, cells) * 0 +
                 velocityFn(1, cells) * 1 +
-                velocityFn(3, cells) * 1 +
-                velocityFn(5, cells) * 0) / 2;
+                velocityFn(2, cells) * 1 +
+                velocityFn(3, cells) * 0) / 2;
     };
 
     auto cells1 = std::vector<float>(4 * 9);
@@ -491,7 +491,7 @@ void createCellsAndHalos(lbm::TensorMap &tensors, Graph &graph) {
     auto nx = 5u; // excluding halo
     auto ny = 3u;
     /* Input test data:
-     * (each of the 9 speeds will be the same)s
+     * (each of the 9 speeds will be +0.01*idx, so offset 3 is +0.03)
      *                                      (6,4) = top right
      *  -----------------------------------
      *  | 1.0 | 2.0 3.0 4.0 5.0 6.0 | 7.0 |
@@ -508,23 +508,23 @@ void createCellsAndHalos(lbm::TensorMap &tensors, Graph &graph) {
     graph.setTileMapping(tensors["cells"], 0);
     graph.setInitialValue(tensors["cells"],
                           ArrayRef<float>{
-                                  2.3, 2.3, 2.3, 2.3, 2.3, 2.3, 2.3, 2.3, 2.3,
-                                  3.3, 3.3, 3.3, 3.3, 3.3, 3.3, 3.3, 3.3, 3.3,
-                                  4.3, 4.3, 4.3, 4.3, 4.3, 4.3, 4.3, 4.3, 4.3,
-                                  5.3, 2.3, 2.3, 2.3, 2.3, 2.3, 2.3, 2.3, 2.3,
-                                  6.3, 6.3, 6.3, 6.3, 6.3, 6.3, 6.3, 6.3, 6.3,
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                                  3.30, 3.31, 3.32, 3.33, 3.34, 3.35, 3.36, 3.37, 3.38,
+                                  4.30, 4.31, 4.32, 4.33, 4.34, 4.35, 4.36, 4.37, 4.38,
+                                  5.30, 5.31, 5.32, 5.33, 5.34, 5.35, 5.36, 5.37, 5.38,
+                                  6.30, 6.31, 6.32, 6.33, 6.34, 6.35, 6.36, 6.37, 6.38,
 
-                                  2.2, 2.2, 2.2, 2.2, 2.2, 2.2, 2.2, 2.2, 2.2,
-                                  3.2, 3.2, 3.2, 3.2, 3.2, 3.2, 3.2, 3.2, 3.2,
-                                  4.2, 4.2, 4.2, 4.2, 4.2, 4.2, 4.2, 4.2, 4.2,
-                                  5.2, 2.2, 2.2, 2.2, 2.2, 2.2, 2.2, 2.2, 2.2,
-                                  6.2, 6.2, 6.2, 6.2, 6.2, 6.2, 6.2, 6.2, 6.2,
+                                  2.20, 2.21, 2.22, 2.23, 2.24, 2.25, 2.26, 2.27, 2.28,
+                                  3.20, 3.21, 3.22, 3.23, 3.24, 3.25, 3.26, 3.27, 3.28,
+                                  4.20, 4.21, 4.22, 4.23, 4.24, 4.25, 4.26, 4.27, 4.28,
+                                  5.20, 5.21, 5.22, 5.23, 5.24, 5.25, 5.26, 5.27, 5.28,
+                                  6.20, 6.21, 6.22, 6.23, 6.24, 6.25, 6.26, 6.27, 6.28,
 
-                                  2.1, 2.1, 2.1, 2.1, 2.1, 2.1, 2.1, 2.1, 2.1,
-                                  3.1, 3.1, 3.1, 3.1, 3.1, 3.1, 3.1, 3.1, 3.1,
-                                  4.1, 4.1, 4.1, 4.1, 4.1, 4.1, 4.1, 4.1, 4.1,
-                                  5.1, 2.1, 2.1, 2.1, 2.1, 2.1, 2.1, 2.1, 2.1,
-                                  6.1, 6.1, 6.1, 6.1, 6.1, 6.1, 6.1, 6.1, 6.1,
+                                  2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.17, 2.18,
+                                  3.10, 3.11, 3.12, 3.13, 3.14, 3.15, 3.16, 3.17, 3.18,
+                                  4.10, 4.11, 4.12, 4.13, 4.14, 4.15, 4.16, 4.17, 4.18,
+                                  5.10, 5.11, 5.12, 5.13, 5.14, 5.15, 5.16, 5.17, 5.18,
+                                  6.10, 6.11, 6.12, 6.13, 6.14, 6.15, 6.16, 6.17, 6.18,
                           });
 
     tensors["tmp_cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "tmp_cells");
@@ -535,61 +535,62 @@ void createCellsAndHalos(lbm::TensorMap &tensors, Graph &graph) {
     graph.setTileMapping(tensors["haloTop"], 0);
     graph.setInitialValue(tensors["haloTop"],
                           ArrayRef<float>{
-                                  2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0,
-                                  3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0,
-                                  4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0,
-                                  5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0,
-                                  6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0,
+                                  2.00, 2.01, 2.02, 2.03, 2.04, 2.05, 2.06, 2.07, 2.08,
+                                  3.00, 3.01, 3.02, 3.03, 3.04, 3.05, 3.06, 3.07, 3.08,
+                                  4.00, 4.01, 4.02, 4.03, 4.04, 4.05, 4.06, 4.07, 4.08,
+                                  5.00, 5.01, 5.02, 5.03, 5.04, 5.05, 5.06, 5.07, 5.08,
+                                  6.00, 6.01, 6.02, 6.03, 6.04, 6.05, 6.06, 6.07, 6.08,
                           });
 
     tensors["haloBottom"] = graph.addVariable(FLOAT, {nx, 9}, "haloBottom");
     graph.setTileMapping(tensors["haloBottom"], 0);
     graph.setInitialValue(tensors["haloBottom"],
                           ArrayRef<float>{
-                                  2.4, 2.4, 2.4, 2.4, 2.4, 2.4, 2.4, 2.4, 2.4,
-                                  3.4, 3.4, 3.4, 3.4, 3.4, 3.4, 3.4, 3.4, 3.4,
-                                  4.4, 4.4, 4.4, 4.4, 4.4, 4.4, 4.4, 4.4, 4.4,
-                                  5.4, 5.4, 5.4, 5.4, 5.4, 5.4, 5.4, 5.4, 5.4,
-                                  6.4, 6.4, 6.4, 6.4, 6.4, 6.4, 6.4, 6.4, 6.4,
+                                  2.40, 2.41, 2.42, 2.43, 2.44, 2.45, 2.46, 2.47, 2.48,
+                                  3.40, 3.41, 3.42, 3.43, 3.44, 3.45, 3.46, 3.47, 3.48,
+                                  4.40, 4.41, 4.42, 4.43, 4.44, 4.45, 4.46, 4.47, 4.48,
+                                  5.40, 5.41, 5.42, 5.43, 5.44, 5.45, 5.46, 5.47, 5.48,
+                                  6.40, 6.41, 6.42, 6.43, 6.44, 6.45, 6.46, 6.47, 6.48,
                           });
 
     tensors["haloLeft"] = graph.addVariable(FLOAT, {ny, 9}, "haloLeft");
     graph.setTileMapping(tensors["haloLeft"], 0);
     graph.setInitialValue(tensors["haloLeft"],
                           ArrayRef<float>{
-                                  1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3,
-                                  1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2,
-                                  1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1,
+                                  1.30, 1.31, 1.32, 1.33, 1.34, 1.35, 1.36, 1.37, 1.38,
+                                  1.20, 1.21, 1.22, 1.23, 1.24, 1.25, 1.26, 1.27, 1.28,
+                                  1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17, 1.18,
                           });
 
     tensors["haloRight"] = graph.addVariable(FLOAT, {ny, 9}, "haloRight");
     graph.setTileMapping(tensors["haloRight"], 0);
     graph.setInitialValue(tensors["haloRight"],
                           ArrayRef<float>{
-                                  7.3, 7.3, 7.3, 7.3, 7.3, 7.3, 7.3, 7.3, 7.3,
-                                  7.2, 7.2, 7.2, 7.2, 7.2, 7.2, 7.2, 7.2, 7.2,
-                                  7.1, 7.1, 7.1, 7.1, 7.1, 7.1, 7.1, 7.1, 7.1,
+                                  7.30, 7.31, 7.32, 7.33, 7.34, 7.35, 7.36, 7.37, 7.38,
+                                  7.20, 7.21, 7.22, 7.23, 7.24, 7.25, 7.26, 7.27, 7.28,
+                                  7.10, 7.11, 7.12, 7.13, 7.14, 7.15, 7.16, 7.17, 7.18,
                           });
 
     tensors["haloTopLeft"] = graph.addVariable(FLOAT, {}, "haloTopLeft");
     graph.setTileMapping(tensors["haloTopLeft"], 0);
-    graph.setInitialValue(tensors["haloTopLeft"], 1.0);
+    graph.setInitialValue(tensors["haloTopLeft"], 1.0 + 0.01 * SpeedIndexes::NorthWest);
 
     tensors["haloTopRight"] = graph.addVariable(FLOAT, {}, "haloTopRight");
     graph.setTileMapping(tensors["haloTopRight"], 0);
-    graph.setInitialValue(tensors["haloTopRight"], 7.0);
+    graph.setInitialValue(tensors["haloTopRight"], 7.0 + 0.01 * SpeedIndexes::NorthEast);
 
     tensors["haloBottomRight"] = graph.addVariable(FLOAT, {}, "haloBottomRight");
     graph.setTileMapping(tensors["haloBottomRight"], 0);
-    graph.setInitialValue(tensors["haloBottomRight"], 7.4);
+    graph.setInitialValue(tensors["haloBottomRight"], 7.4 + 0.01 * SpeedIndexes::SouthEast);
 
 
     tensors["haloBottomLeft"] = graph.addVariable(FLOAT, {}, "haloBottomLeft");
     graph.setTileMapping(tensors["haloBottomLeft"], 0);
-    graph.setInitialValue(tensors["haloBottomLeft"], 1.4);
+    graph.setInitialValue(tensors["haloBottomLeft"], 1.4 + 0.01 * SpeedIndexes::SouthWest);
 }
 
-TEST(propagate, testPropagateVertexTopLeft) {
+
+std::array<std::array<std::array<float, 9>, 5>, 3> runPropagate() {
     auto device = poplar::Device::createCPUDevice();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
@@ -625,8 +626,9 @@ TEST(propagate, testPropagateVertexTopLeft) {
     graph.setTileMapping(v, 0);
 
     auto prog = Sequence(Execute(cs)
-//                         PrintTensor(tensors["cells"]),
-//                         PrintTensor(tensors["tmp_cells"])
+//                        ,PrintTensor(tensors["cells"]),
+//                         PrintTensor(tensors["tmp_cells"]
+
     );
     auto engine = lbm::createDebugEngine(graph, {prog});
     engine.load(device);
@@ -634,17 +636,176 @@ TEST(propagate, testPropagateVertexTopLeft) {
 
     auto tmp_cells = std::array<std::array<std::array<float, 9>, nx>, ny>();
     engine.readTensor("readTmpCells", &tmp_cells);
+    return std::move(tmp_cells);
+}
 
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::NorthWest], 1.0);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::North], 2.0);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::NorthEast], 3.0);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::West], 1.1);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::Middle], 2.1);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::East], 3.1);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::SouthWest], 1.2);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::South], 2.2);
-    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::SouthEast], 3.2);
+
+TEST(propagate, testPropagateVertexTopLeft) {
+    const auto nx = 5u; // excluding halo
+    const auto ny = 3u;
+    auto tmp_cells = runPropagate();
+
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::NorthWest], 1.0 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::North], 2.0 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::NorthEast], 3.0 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::West], 1.1 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::Middle], 2.1 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::East], 3.1 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::SouthWest], 1.2 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::South], 2.2 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][0][SpeedIndexes::SouthEast], 3.2 + 0.01 * SpeedIndexes::SouthEast);
+}
+
+
+TEST(propagate, testPropagateVertexTop) {
+    const auto nx = 5u; // excluding halo
+    const auto ny = 3u;
+    auto tmp_cells = runPropagate();
+
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::NorthWest], 2.0 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::North], 3.0 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::NorthEast], 4.0 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::West], 2.1 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::Middle], 3.1 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::East], 4.1 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::SouthWest], 2.2 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::South], 3.2 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][1][SpeedIndexes::SouthEast], 4.2 + 0.01 * SpeedIndexes::SouthEast);
+
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::NorthWest], 3.0 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::North], 4.0 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::NorthEast], 5.0 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::West], 3.1 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::Middle], 4.1 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::East], 5.1 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::SouthWest], 3.2 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::South], 4.2 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][2][SpeedIndexes::SouthEast], 5.2 + 0.01 * SpeedIndexes::SouthEast);
+
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::NorthWest], 4.0 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::North], 5.0 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::NorthEast], 6.0 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::West], 4.1 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::Middle], 5.1 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::East], 6.1 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::SouthWest], 4.2 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::South], 5.2 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][3][SpeedIndexes::SouthEast], 6.2 + 0.01 * SpeedIndexes::SouthEast);
+}
+
+TEST(propagate, testPropagateVertexBottom) {
+    auto tmp_cells = runPropagate();
+
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::NorthWest], 2.2 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::North], 3.2 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::NorthEast], 4.2 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::West], 2.3 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::Middle], 3.3 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::East], 4.3 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::SouthWest], 2.4 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::South], 3.4 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[0][1][SpeedIndexes::SouthEast], 4.4 + 0.01 * SpeedIndexes::SouthEast);
+
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::NorthWest], 3.2 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::North], 4.2 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::NorthEast], 5.2 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::West], 3.3 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::Middle], 4.3 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::East], 5.3 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::SouthWest], 3.4 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::South], 4.4 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[0][2][SpeedIndexes::SouthEast], 5.4 + 0.01 * SpeedIndexes::SouthEast);
+
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::NorthWest], 4.2 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::North], 5.2 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::NorthEast], 6.2 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::West], 4.3 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::Middle], 5.3 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::East], 6.3 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::SouthWest], 4.4 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::South], 5.4 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[0][3][SpeedIndexes::SouthEast], 6.4 + 0.01 * SpeedIndexes::SouthEast);
+}
+
+
+TEST(propagate, testPropagateVertexTopRight) {
+    const auto nx = 5u; // excluding halo
+    const auto ny = 3u;
+    auto tmp_cells = runPropagate();
+
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::NorthWest], 5.0 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::North], 6.0 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::NorthEast], 7.0 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::West], 5.1 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::Middle], 6.1 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::East], 7.1 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::SouthWest], 5.2 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::South], 6.2 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[ny - 1][nx - 1][SpeedIndexes::SouthEast], 7.2 + 0.01 * SpeedIndexes::SouthEast);
+
 
 }
 
 
+TEST(propagate, testPropagateVertexBottomLeft) {
+    const auto nx = 5u; // excluding halo
+    const auto ny = 3u;
+    auto tmp_cells = runPropagate();
+
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::NorthWest], 1.2 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::North], 2.2 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::NorthEast], 3.2 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::West], 1.3 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::Middle], 2.3 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::East], 3.3 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::SouthWest], 1.4 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::South], 2.4 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[0][0][SpeedIndexes::SouthEast], 3.4 + 0.01 * SpeedIndexes::SouthEast);
+}
+
+
+TEST(propagate, testPropagateVertexBottomRight) {
+    const auto nx = 5u; // excluding halo
+    const auto ny = 3u;
+    auto tmp_cells = runPropagate();
+
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::NorthWest], 5.2 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::North], 6.2 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::NorthEast], 7.2 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::West], 5.3 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::Middle], 6.3 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::East], 7.3 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::SouthWest], 5.4 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::South], 6.4 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[0][nx - 1][SpeedIndexes::SouthEast], 7.4 + 0.01 * SpeedIndexes::SouthEast);
+}
+
+TEST(propagate, testPropagateVertexLeft) {
+    auto tmp_cells = runPropagate();
+
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::NorthWest], 1.1 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::North], 2.1 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::NorthEast], 3.1 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::West], 1.2 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::Middle], 2.2 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::East], 3.2 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::SouthWest], 1.3 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::South], 2.3 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[1][0][SpeedIndexes::SouthEast], 3.3 + 0.01 * SpeedIndexes::SouthEast);
+}
+
+
+TEST(propagate, testPropagateVertexRight) {
+    auto tmp_cells = runPropagate();
+    auto nx = 5;
+
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::NorthWest], 5.1 + 0.01 * SpeedIndexes::NorthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::North], 6.1 + 0.01 * SpeedIndexes::North);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::NorthEast], 7.1 + 0.01 * SpeedIndexes::NorthEast);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::West], 5.2 + 0.01 * SpeedIndexes::West);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::Middle], 6.2 + 0.01 * SpeedIndexes::Middle);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::East], 7.2 + 0.01 * SpeedIndexes::East);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::SouthWest], 5.3 + 0.01 * SpeedIndexes::SouthWest);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::South], 6.3 + 0.01 * SpeedIndexes::South);
+    ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::SouthEast], 7.3 + 0.01 * SpeedIndexes::SouthEast);
+}

@@ -176,6 +176,10 @@ public:
     Input <Vector<float>> out; // numCols x numRows x NumSpeeds
 
     bool compute() {
+        if (numRows < 2 || numCols < 2) {
+            return false;
+        }
+
         auto assignToCell = [this](const size_t idx, const float2 src[5]) -> void {
             float2 *f2out = reinterpret_cast<float2 *>(&out[idx]);
             f2out[0] = src[0];
@@ -203,8 +207,7 @@ public:
         auto topLeft = [=]() -> void {
             const auto row = (numRows - 1u);
             constexpr auto col = 0u;
-            const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
-//            printf("\ncellIdx: %u\n", cellIdx);
+            const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
             const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
             const auto ne = haloTop[col * NumSpeeds + eastCellOffset + SpeedIndexes::NorthEast];
             const auto nw = *haloTopLeft;
@@ -213,10 +216,7 @@ public:
             const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
             const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
             const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
-            const auto sw = haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthEast];
-//
-//            printf("nw: %.1f n: %.1f ne: %.1f w: %.1f m: %.1f e: %.1f sw: %.1f s: %.1f se: %.1f \n",
-//                   nw, n, ne, w, m, e, sw, s, se);
+            const auto sw = haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthWest];
 
             float2 result[5] = {{m,  e},
                                 {n,  w},
@@ -230,7 +230,7 @@ public:
         auto topRight = [=]() -> void {
             const auto row = (numRows - 1u);
             const auto col = (numCols - 1u);
-            const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
+            const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
             const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
             const auto ne = *haloTopRight;
             const auto nw = haloTop[col * NumSpeeds + westCellOffset + SpeedIndexes::NorthWest];
@@ -238,7 +238,7 @@ public:
             const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
             const auto e = haloRight[row * NumSpeeds + middleCellOffset + SpeedIndexes::East];
             const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-            const auto se = haloRight[row * NumSpeeds + southCellOffset + SpeedIndexes::SouthEast];
+            const auto se = haloRight[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthEast];
             const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
 
             float2 result[5] = {{m,  e},
@@ -256,7 +256,7 @@ public:
             const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
             const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
             const auto ne = in[cellIdx + northEastCellOffset + SpeedIndexes::NorthEast];
-            const auto nw = haloLeft[row * NumSpeeds + northCellOffset + SpeedIndexes::NorthWest];
+            const auto nw = haloLeft[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthWest];
             const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
             const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
             const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
@@ -278,7 +278,7 @@ public:
             const auto col = (numCols - 1u);
             const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
             const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-            const auto ne = haloRight[row * NumSpeeds + northCellOffset + SpeedIndexes::NorthEast];
+            const auto ne = haloRight[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthEast];
             const auto nw = in[cellIdx + northWestCellOffset + SpeedIndexes::NorthWest];
             const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
             const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
@@ -299,14 +299,14 @@ public:
         auto top = [=]() -> void {
             auto row = (numRows - 1u);
             for (size_t col = 1; col < *numCols - 1; col++) {
-                const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
+                const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
                 const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
                 const auto ne = haloTop[col * NumSpeeds + eastCellOffset + SpeedIndexes::NorthEast];
                 const auto nw = haloTop[col * NumSpeeds + westCellOffset + SpeedIndexes::NorthWest];
                 const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
                 const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
                 const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                const auto s = in[cellIdx + northCellOffset + SpeedIndexes::South];
+                const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
                 const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
                 const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
 
@@ -323,7 +323,7 @@ public:
         auto bottom = [=]() -> void {
             auto row = 0u;
             for (size_t col = 1; col < *numCols - 1; col++) {
-                const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
+                const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
                 const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
                 const auto ne = in[cellIdx + northEastCellOffset + SpeedIndexes::NorthEast];
                 const auto nw = in[cellIdx + northWestCellOffset + SpeedIndexes::NorthWest];
@@ -353,7 +353,7 @@ public:
                 const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
                 const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
                 const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                const auto s = in[cellIdx + northCellOffset + SpeedIndexes::South];
+                const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
                 const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
                 const auto sw = haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthWest];
 
@@ -377,7 +377,7 @@ public:
                 const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
                 const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
                 const auto e = haloRight[row * NumSpeeds + middleCellOffset + SpeedIndexes::East];
-                const auto s = in[cellIdx + northCellOffset + SpeedIndexes::South];
+                const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
                 const auto se = haloRight[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthEast];
                 const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
 
@@ -394,7 +394,7 @@ public:
         auto middle = [=]() -> void {
             for (size_t row = 1; row < *numRows - 1; row++) {
                 for (size_t col = 1; col < *numCols - 1; col++) {
-                    const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
+                    const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
 
                     const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
                     const auto ne = in[cellIdx + northEastCellOffset + SpeedIndexes::NorthEast];
@@ -402,7 +402,7 @@ public:
                     const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
                     const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
                     const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                    const auto s = in[cellIdx + northCellOffset + SpeedIndexes::South];
+                    const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
                     const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
                     const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
 
@@ -417,6 +417,16 @@ public:
             }
         };
         topLeft();
+        top();
+        topRight();
+        left();
+        right();
+        middle();
+        bottomLeft();
+        bottom();
+        bottomRight();
+
+
         return true;
     }
 };
