@@ -170,10 +170,10 @@ public:
     Input<float> haloBottomLeft;
     Input<float> haloBottomRight;
 
-    Input <Vector<float>> in; // numCols x numRows x NumSpeeds
+    Input <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> in; // numCols x numRows x NumSpeeds
     Input<unsigned> numRows; // i.e. excluding halo
     Input<unsigned> numCols; // i.e. excluding halo
-    Input <Vector<float>> out; // numCols x numRows x NumSpeeds
+    Input <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> out; // numCols x numRows x NumSpeeds
 
     bool compute() {
         if (numRows < 2 || numCols < 2) {
@@ -431,37 +431,128 @@ public:
     }
 };
 
-//class ReboundVertex : public Vertex {
-//
-//public:
-//    Input <Vector<float>> in; // 9 speeds in every cell, no halo
-//    Input <Vector<float>> out; // 9 speeds in every cell, no halo
-//    Input <Vector<bool>> obstacles; //  no halo
-//    Input<unsigned> numRows; // no halo
-//    Input<unsigned> numCols; // no halo
-//    Output<float> out;
-//
-//    bool compute() {
-//        /* loop over the cells in the grid */
-//        for (size_t jj = 0; jj < *numRows; jj++) {
-//#pragma unroll 4
-//            for (size_t ii = 0; ii < *numCols; ii++) {
-//                auto obstacleIdx = jj * numCols + ii;
-//                auto cellIdx = jj * (numCols * NumSpeeds) + (ii * NumSpeeds);
-//                /* if the cell contains an obstacle */
-//                if (obstacles[obstacleIdx]) {
-//                    /* called after propagate, so taking values from scratch space
-//                    ** mirroring, and writing into main grid */
-//                    out[cellIdx + 1] = in[cellIdx + 3];
-//                    out[cellIdx + 2] = in[cellIdx + 4];
-//                    out[cellIdx + 3] = in[cellIdx + 1];
-//                    out[cellIdx + 4] = in[cellIdx + 2];
-//                    out[cellIdx + 5] = in[cellIdx + 7];
-//                    out[cellIdx + 6] = in[cellIdx + 8];
-//                    out[cellIdx + 7] = in[cellIdx + 5];
-//                    out[cellIdx + 8] = in[cellIdx + 6];
-//                }
-//            }
-//        }
-//    }
-//};
+class ReboundVertex : public Vertex {
+
+public:
+    Input <Vector<float>> in; // 9 speeds in every cell, no halo
+    Output <Vector<float>> out; // 9 speeds in every cell, no halo
+    Input <Vector<bool>> obstacles; //  no halo
+    Input<unsigned> numRows; // no halo
+    Input<unsigned> numCols; // no halo
+
+    bool compute() {
+        size_t cols = *numCols;
+        size_t rows = *numRows;
+
+        /* loop over the cells in the grid */
+        for (size_t jj = 0; jj < rows; jj++) {
+#pragma unroll 4
+            for (size_t ii = 0; ii < cols; ii++) {
+                auto obstacleIdx = jj * cols + ii;
+                auto cellIdx = jj * (cols * NumSpeeds) + (ii * NumSpeeds);
+                /* if the cell contains an obstacle */
+                if (obstacles[obstacleIdx]) {
+                    /* called after propagate, so taking values from scratch space
+                    ** mirroring, and writing into main grid */
+                    out[cellIdx + 1] = in[cellIdx + 3];
+                    out[cellIdx + 2] = in[cellIdx + 4];
+                    out[cellIdx + 3] = in[cellIdx + 1];
+                    out[cellIdx + 4] = in[cellIdx + 2];
+                    out[cellIdx + 5] = in[cellIdx + 7];
+                    out[cellIdx + 6] = in[cellIdx + 8];
+                    out[cellIdx + 7] = in[cellIdx + 5];
+                    out[cellIdx + 8] = in[cellIdx + 6];
+                }
+            }
+        }
+        return true;
+    }
+};
+
+
+class CollisionVertex : public Vertex {
+
+public:
+    Input <Vector<float>> in; // 9 speeds in every cell, no halo
+    Input <Vector<bool>> obstacles; //  no halo
+    Input<unsigned> numRows; // no halo
+    Input<unsigned> numCols; // no halo
+    Input<float> omega;
+    Output <Vector<float>> out;
+
+    bool compute() {
+        const float c_sq = 1.f / 3.f; /* square of speed of sound */
+        const float w0 = 4.f / 9.f;  /* weighting factor */
+        const float w1 = 1.f / 9.f;  /* weighting factor */
+        const float w2 = 1.f / 36.f; /* weighting factor */
+
+        /* loop over the cells in the grid
+        ** NB the collision step is called after
+        ** the propagate step and so values of interest
+        ** are in the scratch-space grid */
+        for (int jj = 0; jj < *numRows; jj++) {
+            for (int ii = 0; ii < *numCols; ii++) {
+                auto idx = ii + jj * *numCols;
+                /* don't consider occupied cells */
+                // TODO can just fold rebound in here.
+                if (!obstacles[idx]) {
+                    /* compute local density total */
+                    float local_density = 0.f;
+
+                    for (int kk = 0; kk < NumSpeeds; kk++) {
+                        local_density += in[idx + kk];
+                    }
+
+                    /* compute x velocity component */
+                    float u_x = ((in[idx + 1] + in[idx + 5] + in[idx + 8])
+                                 - (in[idx + 3] + in[idx + 6] + in[idx + 7]))
+                                / local_density;
+                    /* compute y velocity component */
+                    float u_y = ((in[idx + 2] + in[idx + 5] + in[idx + 6])
+                                 - (in[idx + 4] + in[idx + 7] + in[idx + 8])) / local_density;
+
+                    /* velocity squared */
+                    float u_sq = u_x * u_x + u_y * u_y;
+
+                    /* directional velocity components */
+                    float u[NumSpeeds];
+                    u[1] = u_x;        /* east */
+                    u[2] = u_y;  /* north */
+                    u[3] = -u_x;        /* west */
+                    u[4] = -u_y;  /* south */
+                    u[5] = u_x + u_y;  /* north-east */
+                    u[6] = -u_x + u_y;  /* north-west */
+                    u[7] = -u_x - u_y;  /* south-west */
+                    u[8] = u_x - u_y;  /* south-east */
+
+                    const auto u_over_2csq = u_sq / (2.f * c_sq);
+                    const auto cc2 = (2.f * c_sq * c_sq);
+
+
+                    // TODO! This is nicely vectorisable
+                    /* equilibrium densities */
+                    float d_equ[NumSpeeds];
+                    /* zero velocity density: weight w0 */
+                    d_equ[0] = w0 * local_density * (1.f - u_over_2csq);
+                    /* axis speeds: weight w1 */
+                    d_equ[1] = w1 * local_density * (1.f + u[1] / c_sq + (u[1] * u[1]) / cc2 - u_over_2csq);
+                    d_equ[2] = w1 * local_density * (1.f + u[2] / c_sq + (u[2] * u[2]) / cc2 - u_over_2csq);
+                    d_equ[3] = w1 * local_density * (1.f + u[3] / c_sq + (u[3] * u[3]) / cc2 - u_over_2csq);
+                    d_equ[4] = w1 * local_density * (1.f + u[4] / c_sq + (u[4] * u[4]) / cc2 - u_over_2csq);
+                    /* diagonal speeds: weight w2 */
+                    d_equ[5] = w2 * local_density * (1.f + u[5] / c_sq + (u[5] * u[5]) / cc2 - u_over_2csq);
+                    d_equ[6] = w2 * local_density * (1.f + u[6] / c_sq + (u[6] * u[6]) / cc2 - u_over_2csq);
+                    d_equ[7] = w2 * local_density * (1.f + u[7] / c_sq + (u[7] * u[7]) / cc2 - u_over_2csq);
+                    d_equ[8] = w2 * local_density * (1.f + u[8] / c_sq + (u[8] * u[8]) / cc2 - u_over_2csq);
+
+                    /* relaxation step */
+                    //TODO can float2 this (or better yet float4)
+                    for (int kk = 0; kk < NumSpeeds; kk++) {
+                        out[idx + kk] = in[idx + kk] + omega * (d_equ[kk] - in[idx + kk]);
+                    }
+                }
+            }
+        }
+        return true;
+    }
+};

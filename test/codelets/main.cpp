@@ -809,3 +809,66 @@ TEST(propagate, testPropagateVertexRight) {
     ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::South], 6.3 + 0.01 * SpeedIndexes::South);
     ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::SouthEast], 7.3 + 0.01 * SpeedIndexes::SouthEast);
 }
+
+
+TEST(rebound, testRebound) {
+    auto device = poplar::Device::createCPUDevice();
+    auto graph = Graph{device.getTarget()};
+    graph.addCodelets("D2Q9Codelets.cpp");
+    auto tensors = lbm::TensorMap{};
+
+
+    const auto nx = 2u;
+    const auto ny = 1u;
+
+    tensors["cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "cells");
+    graph.setTileMapping(tensors["cells"], 0);
+    graph.setInitialValue(tensors["cells"],
+                          ArrayRef<float>{
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                          });
+
+    graph.createHostRead("readCells", tensors["cells"], false);
+    tensors["tmp_cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "tmp_cells");
+    graph.setTileMapping(tensors["tmp_cells"], 0);
+    graph.setInitialValue(tensors["tmp_cells"],
+                          ArrayRef<float>{
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                          });
+
+    tensors["obstacles"] = graph.addVariable(BOOL, {ny, nx}, "obstacles");
+    graph.setTileMapping(tensors["obstacles"], 0);
+    graph.setInitialValue(tensors["obstacles"],
+                          ArrayRef<bool>{
+                                  true, false});
+
+    auto cs = graph.addComputeSet("test");
+
+    auto v = graph.addVertex(cs,
+                             "ReboundVertex",
+                             {
+                                     {"in",        tensors["tmp_cells"].flatten()},
+                                     {"out",       tensors["cells"].flatten()},
+                                     {"numRows",   ny},
+                                     {"numCols",   nx},
+                                     {"obstacles", tensors["obstacles"].flatten()},
+                             });
+
+    graph.setCycleEstimate(v, 1);
+    graph.setTileMapping(v, 0);
+
+    auto prog = Sequence(Execute(cs));
+    auto engine = lbm::createDebugEngine(graph, {prog});
+    engine.load(device);
+    engine.run();
+
+    auto cells = std::array<std::array<std::array<float, 9>, nx>, ny>();
+    engine.readTensor("readCells", &cells);
+
+    auto expectedOriginal = std::array<float, 9>{2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38};
+    auto expectedRebound = std::array<float, 9>{2.30, 2.33, 2.34, 2.31, 2.32, 2.37, 2.38, 2.35, 2.36};
+    ASSERT_EQ(cells[0][0], expectedRebound) << "Should have rebounded (obstacle)";
+    ASSERT_EQ(cells[0][1], expectedOriginal) << "Should be unchanged (no obstacle)";
+}
