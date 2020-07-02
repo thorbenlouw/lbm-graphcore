@@ -481,10 +481,10 @@ public:
     Output <Vector<float>> out;
 
     bool compute() {
-        const float c_sq = 1.f / 3.f; /* square of speed of sound */
-        const float w0 = 4.f / 9.f;  /* weighting factor */
-        const float w1 = 1.f / 9.f;  /* weighting factor */
-        const float w2 = 1.f / 36.f; /* weighting factor */
+        const auto c_sq = 1.f / 3.f; /* square of speed of sound */
+        const auto w0 = 4.f / 9.f;  /* weighting factor */
+        const auto w1 = 1.f / 9.f;  /* weighting factor */
+        const auto w2 = 1.f / 36.f; /* weighting factor */
 
         /* loop over the cells in the grid
         ** NB the collision step is called after
@@ -492,38 +492,42 @@ public:
         ** are in the scratch-space grid */
         for (int jj = 0; jj < *numRows; jj++) {
             for (int ii = 0; ii < *numCols; ii++) {
-                auto idx = ii + jj * *numCols;
+                const auto obstacleIdx = ii + jj * *numCols;
+                const auto idx = obstacleIdx * NumSpeeds;
                 /* don't consider occupied cells */
                 // TODO can just fold rebound in here.
-                if (!obstacles[idx]) {
+                if (!obstacles[obstacleIdx]) {
                     /* compute local density total */
-                    float local_density = 0.f;
+                    auto local_density = 0.f;
 
                     for (int kk = 0; kk < NumSpeeds; kk++) {
                         local_density += in[idx + kk];
                     }
 
                     /* compute x velocity component */
-                    float u_x = ((in[idx + 1] + in[idx + 5] + in[idx + 8])
-                                 - (in[idx + 3] + in[idx + 6] + in[idx + 7]))
-                                / local_density;
+                    const auto u_x = ((in[idx + 1] + in[idx + 5] + in[idx + 8])
+                                      - (in[idx + 3] + in[idx + 6] + in[idx + 7]))
+                                     / local_density;
                     /* compute y velocity component */
-                    float u_y = ((in[idx + 2] + in[idx + 5] + in[idx + 6])
-                                 - (in[idx + 4] + in[idx + 7] + in[idx + 8])) / local_density;
+                    const auto u_y = ((in[idx + 2] + in[idx + 5] + in[idx + 6])
+                                      - (in[idx + 4] + in[idx + 7] + in[idx + 8])) / local_density;
 
                     /* velocity squared */
-                    float u_sq = u_x * u_x + u_y * u_y;
+                    const auto u_sq = u_x * u_x + u_y * u_y;
 
                     /* directional velocity components */
-                    float u[NumSpeeds];
-                    u[1] = u_x;        /* east */
-                    u[2] = u_y;  /* north */
-                    u[3] = -u_x;        /* west */
-                    u[4] = -u_y;  /* south */
-                    u[5] = u_x + u_y;  /* north-east */
-                    u[6] = -u_x + u_y;  /* north-west */
-                    u[7] = -u_x - u_y;  /* south-west */
-                    u[8] = u_x - u_y;  /* south-east */
+                    const float u[NumSpeeds] = {
+                            0, /* middle */
+                            u_x,        /* east */
+                            u_y,  /* north */
+                            -u_x,        /* west */
+                            -u_y,  /* south */
+                            u_x + u_y,  /* north-east */
+                            -u_x + u_y,  /* north-west */
+                            -u_x - u_y,  /* south-west */
+                            u_x - u_y  /* south-east */
+                    };
+
 
                     const auto u_over_2csq = u_sq / (2.f * c_sq);
                     const auto cc2 = (2.f * c_sq * c_sq);
@@ -546,7 +550,7 @@ public:
                     d_equ[8] = w2 * local_density * (1.f + u[8] / c_sq + (u[8] * u[8]) / cc2 - u_over_2csq);
 
                     /* relaxation step */
-                    //TODO can float2 this (or better yet float4)
+                    //TODO can float2 this
                     for (int kk = 0; kk < NumSpeeds; kk++) {
                         out[idx + kk] = in[idx + kk] + omega * (d_equ[kk] - in[idx + kk]);
                     }

@@ -810,6 +810,124 @@ TEST(propagate, testPropagateVertexRight) {
     ASSERT_FLOAT_EQ(tmp_cells[1][nx - 1][SpeedIndexes::SouthEast], 7.3 + 0.01 * SpeedIndexes::SouthEast);
 }
 
+auto runCollision() -> std::array<std::array<std::array<float, 9>, 2>, 1> {
+    auto device = poplar::Device::createCPUDevice();
+    auto graph = Graph{device.getTarget()};
+    graph.addCodelets("D2Q9Codelets.cpp");
+    auto tensors = lbm::TensorMap{};
+
+
+    const auto nx = 2u;
+    const auto ny = 1u;
+
+    tensors["cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "cells");
+    graph.setTileMapping(tensors["cells"], 0);
+    graph.setInitialValue(tensors["cells"],
+                          ArrayRef<float>{
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                          });
+
+    graph.createHostRead("readCells", tensors["cells"], false);
+    tensors["tmp_cells"] = graph.addVariable(FLOAT, {ny, nx, 9}, "tmp_cells");
+    graph.setTileMapping(tensors["tmp_cells"], 0);
+    graph.setInitialValue(tensors["tmp_cells"],
+                          ArrayRef<float>{
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                                  2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38,
+                          });
+
+    tensors["obstacles"] = graph.addVariable(BOOL, {ny, nx}, "obstacles");
+    graph.setTileMapping(tensors["obstacles"], 0);
+    graph.setInitialValue(tensors["obstacles"],
+                          ArrayRef<bool>{
+                                  true, false});
+
+    auto cs = graph.addComputeSet("test");
+
+    auto v = graph.addVertex(cs,
+                             "CollisionVertex",
+                             {
+                                     {"in",        tensors["tmp_cells"].flatten()},
+                                     {"out",       tensors["cells"].flatten()},
+                                     {"numRows",   ny},
+                                     {"numCols",   nx},
+                                     {"omega",     1},
+                                     {"obstacles", tensors["obstacles"].flatten()},
+                             });
+
+    graph.setCycleEstimate(v, 1);
+    graph.setTileMapping(v, 0);
+
+    auto prog = Sequence(Execute(cs));
+    auto engine = lbm::createDebugEngine(graph, {prog});
+    engine.load(device);
+    engine.run();
+
+    auto cells = std::array<std::array<std::array<float, 9>, nx>, ny>();
+    engine.readTensor("readCells", &cells);
+    return cells;
+}
+
+TEST(collision, obstacleDoesntChange) {
+    auto cells = runCollision();
+    auto expectedUnchanged = std::array<float, 9>{2.30, 2.31, 2.32, 2.33, 2.34, 2.35, 2.36, 2.37, 2.38};
+    ASSERT_EQ(cells[0][0], expectedUnchanged) << "Should be unchanged (there was obstacle)";
+}
+
+
+TEST(collision, nonObstacleDoesChange) {
+    const auto omega = 1.f;
+    const auto c_sq = 1.f / 3.f; /* square of speed of sound */
+    const auto w0 = 4.f / 9.f;  /* weighting factor */
+    const auto w1 = 1.f / 9.f;  /* weighting factor */
+    const auto w2 = 1.f / 36.f; /* weighting factor */
+
+    auto localDensity = [](std::array<float, 9> cell) -> float {
+        return std::accumulate(cell.begin(), cell.end(), 0.0f);
+    };
+
+    auto velocityComponents = [](std::array<float, 9> cell, float localDensity) -> std::tuple<float, float> {
+        return {
+                (cell[1] + cell[5] + cell[8] - cell[3] - cell[6] - cell[7]) / localDensity,
+                (cell[2] + cell[5] + cell[6] - cell[4] - cell[7] - cell[8]) / localDensity,
+        };
+    };
+
+    auto equilibrium = [=](std::tuple<float, float> velocityComponents, float localDensity) -> std::array<float, 9> {
+        auto[ux, uy] = velocityComponents;
+        auto u = std::array<float, 9>{0, ux, uy, -ux, -uy, ux + uy, -ux + uy,
+                                      -ux - uy, ux - uy};
+        auto usq = ux * ux + uy * uy;
+        auto weights = std::array<float, 9>{w0, w1, w1, w1, w1, w2, w2, w2, w2};
+        auto result = std::array<float, 9>();
+        auto equFn = [=](float ui, float wi) -> float {
+            return wi * localDensity * (1.0f + ui / c_sq + ui * ui / (2.f * c_sq * c_sq) - usq / (2.f * c_sq));
+        };
+        for (size_t i = 0; i < weights.size(); i++) {
+            result[i] = equFn(u[i], weights[i]);
+        }
+        return result;
+    };
+
+    auto collide = [=](std::array<float, 9> cell) -> std::array<float, 9> {
+        auto ld = localDensity(cell);
+        auto v = velocityComponents(cell, ld);
+        auto equ = equilibrium(v, ld);
+        auto result = std::array<float, 9>();
+        for (size_t i = 0u; i < 9u; i++) {
+            result[i] = cell[i] + omega * (equ[i] - cell[i]);
+        }
+        return result;
+    };
+
+    auto cells = runCollision();
+    auto expectedChanged = collide(cells[0][1]);
+
+    for (size_t i = 0; i < 9; i++) {
+        ASSERT_FLOAT_EQ(cells[0][1][i], expectedChanged[i]) << "Should be changed by collision (there was no obstacle)";
+    }
+}
 
 TEST(rebound, testRebound) {
     auto device = poplar::Device::createCPUDevice();
