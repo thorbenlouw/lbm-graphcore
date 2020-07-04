@@ -288,7 +288,7 @@ auto main(int argc, char *argv[]) -> int {
 
 
 //    auto device = lbm::getIpuModel();
-    auto device = getIpuDevice();
+    auto device = lbm::getIpuDevice();
     if (!device.has_value()) {
         return EXIT_FAILURE;
     }
