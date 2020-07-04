@@ -5,6 +5,7 @@ set(Main_SRCS
         GraphcoreUtils.hpp
         LbmParams.hpp
         LatticeBoltzmann.hpp
+        StructuredGridUtils.hpp
         )
 
 

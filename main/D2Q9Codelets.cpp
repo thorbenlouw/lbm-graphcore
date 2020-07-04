@@ -15,10 +15,42 @@ enum SpeedIndexes {
     Middle, East, North, West, South, NorthEast, NorthWest, SouthWest, SouthEast
 };
 
+
 /**
  * Convert the 9 directional speed distributions to a normed velocity
  */
 class NormedVelocityVertex : public Vertex {
+public:
+    Input <Vector<float>> cells; // 9 speeds in every cell
+    Output <Vector<float>> vels; // 1 velocity for every cell
+    Input<unsigned> numCells;
+
+    bool compute() {
+        for (auto i = 0; i < *numCells; i++) {
+            auto idx = i * NumSpeeds;
+            const auto c0 = cells[idx + 0];
+            const auto c1 = cells[idx + 1];
+            const auto c2 = cells[idx + 2];
+            const auto c3 = cells[idx + 3];
+            const auto c4 = cells[idx + 4];
+            const auto c5 = cells[idx + 5];
+            const auto c6 = cells[idx + 6];
+            const auto c7 = cells[idx + 7];
+            const auto c8 = cells[idx + 8];
+
+
+            auto local_density = (c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8);
+
+            auto u_x = (c1 + c5 + c8 - c3 - c6 - c7) / local_density;
+            auto u_y = (c2 + c5 + c6 - c4 - c7 - c8) / local_density;
+            vels[i] = sqrtf((u_x * u_x) + (u_y * u_y));
+        }
+        return true;
+    }
+};
+
+
+class NormedVelocityVertexOptim : public Vertex {
 public:
     Input <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> cells; // 9 speeds in every cell
     Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> vels; // 1 velocity for every cell
@@ -53,6 +85,30 @@ public:
 class MaskedSumPartial : public Vertex { // On each worker, reduce the cells
 
 public:
+    Input <Vector<float>> velocities;
+    Input <Vector<bool>> obstacles;
+    Input<unsigned> numCells;
+    Output <Vector<float>> totalAndCount;
+
+    bool compute() {
+        const uint16_t n = (uint16_t) * numCells;
+
+        auto count = 0.0f;
+        auto tmp = 0.0f;
+        for (auto i = 0; i < n; i++) {
+            tmp += velocities[i] * (1 - obstacles[i]); // only if not obstacle
+            count += (1 - obstacles[i]); // only if not obstacle
+        }
+        totalAndCount[0] = tmp;
+        totalAndCount[1] = count;
+
+        return true;
+    }
+};
+
+class MaskedSumPartialOptim : public Vertex { // On each worker, reduce the cells
+
+public:
     Input <Vector<float, VectorLayout::ONE_PTR, 4, false>> velocities;
     Input <Vector<bool, VectorLayout::ONE_PTR, 4, false>> obstacles;
     Input<unsigned> numCells;
@@ -79,6 +135,26 @@ public:
  */
 class ReducePartials : public Vertex { // Take the partials within a tile and reduce them
 public:
+    Input <Vector<float>> totalAndCountPartials;
+    Input<unsigned> numPartials;
+    Output <Vector<float>> totalAndCount;
+
+    bool compute() {
+        float tmp = 0.f;
+        float count = 0.f;
+
+        for (int i = 0; i < *numPartials; i++) {
+            tmp += totalAndCountPartials[i * 2];
+            count += totalAndCountPartials[i * 2 + 1];
+        }
+        totalAndCount[0] = tmp;
+        totalAndCount[1] = count;
+        return true;
+    }
+};
+
+class ReducePartialsOptim : public Vertex { // Take the partials within a tile and reduce them
+public:
     Input <Vector<float, VectorLayout::SCALED_PTR32, 4>> totalAndCountPartials;
     Input<unsigned> numPartials;
     Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> totalAndCount;
@@ -103,7 +179,7 @@ class AppendReducedSum : public Vertex { // Reduce the per-tile partial sums and
 
 public:
     Input <Vector<float, VectorLayout::SCALED_PTR64, 8>> totalAndCountPartials;
-    Input<unsigned> index;
+    InOut<uint32_t> index;
     Input<unsigned> numPartials;
     Output <Vector<float, VectorLayout::SCALED_PTR32, 4>> finals;
 
@@ -113,8 +189,7 @@ public:
         for (auto i = 0u; i < *numPartials; i++) {
             tmp += *reinterpret_cast<float2 *>(&totalAndCountPartials[i * 2]);
         }
-        finals[*index] = tmp[0] / tmp[1];
-
+        finals[(*index)++] = tmp[0] / tmp[1];
         return true;
     }
 };

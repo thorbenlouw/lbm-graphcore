@@ -228,9 +228,9 @@ namespace grids {
         auto nontall_height = rows / numWorkersPerTile;
         auto tall_height = nontall_height + 1;
         auto num_tall_rows = rows - numWorkersPerTile * nontall_height;
-        auto num_nontall_rows = numWorkersPerTile < num_tall_rows ? numWorkersPerTile - num_tall_rows : 0;
+        auto num_nontall_rows = (rows >  num_tall_rows) ? rows - num_tall_rows : 0;
         auto worker = 0u;
-        auto r = 0u;
+        auto r = slice.rows().from();
 
         for (size_t i = 0; i < num_tall_rows; i++) {
             workerMappings.insert({MappingTarget{tile, worker, ipu},

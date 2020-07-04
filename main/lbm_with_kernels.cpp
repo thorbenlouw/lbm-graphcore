@@ -34,23 +34,23 @@ auto applySlice(Tensor &tensor, grids::Slice2D slice) -> Tensor {
 };
 
 auto
-averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &tileLevelMappings,
+averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
                 grids::TileMappings &workerLevelMappings) -> Program {
 
 
-    const auto numIpus = 1;
-    const auto numTiles = 1216;
-    const auto numWorkers = 6;
+    const auto numIpus = graph.getTarget().getNumIPUs();
+    const auto numTiles = graph.getTarget().getNumTiles();
+    const auto numWorkers = graph.getTarget().getNumWorkerContexts();
 
 
     ComputeSet csVel = graph.addComputeSet("normedVelocity");
     ComputeSet csMaskedPartial = graph.addComputeSet("maskedPartial");
     ComputeSet csTileReducedPartial = graph.addComputeSet("perTileReduce");
 
-
     for (const auto &[target, slice] : workerLevelMappings) {
         auto tile = target.ipu() * numTiles + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
+
         auto v = graph.addVertex(csVel,
                                  "NormedVelocityVertex",
                                  {{"cells",    applySlice(tensors["cells"], slice)},
@@ -122,6 +122,7 @@ collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::Ti
     for (const auto &[target, slice] : mappings) {
         auto tile = target.ipu() * numTiles + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
+
         auto v = graph.addVertex(reboundCs,
                                  "CollisionVertex",
                                  {
@@ -237,17 +238,9 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     return Execute(accelerateCs);
 }
 
-auto incrementCounter(Graph &graph, TensorMap &tensors) -> Program {
-    tensors["1"] = graph.addConstant(UNSIGNED_INT, {}, 1u, "1");
-    graph.setTileMapping(tensors["1"], 0);
-    Sequence s;
-    popops::addInPlace(graph, tensors["counter"], tensors["1"], s, "counter++");
-    return std::move(s);
-}
 
 auto timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
     return Sequence{
-            incrementCounter(graph, tensors),
             accelerate_flow(graph, params, tensors),
             propagate(graph, params, tensors, mappings),
             rebound(graph, params, tensors, mappings),
@@ -255,10 +248,17 @@ auto timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids
     };
 }
 
-auto mapCellsToTiles(Graph &graph, Tensor &cells, grids::TileMappings &tileMappings) {
+auto mapCellsToTiles(Graph &graph, Tensor &cells, grids::TileMappings &tileMappings, bool print = false) {
     const auto numTilesPerIpu = graph.getTarget().getNumTiles();
     for (const auto&[target, slice]: tileMappings) {
         const auto tile = target.ipu() * numTilesPerIpu + target.tile();
+
+        if (print) {
+            std::cout << "tile: " << tile << " target: " << target.ipu() << ":" << target.tile() << ":"
+                      << target.worker() <<
+                      "(r: " << slice.rows().from() << ",c: " << slice.cols().from() << ",w: " << slice.width() <<
+                      ",h: " << slice.height() << std::endl;
+        }
         graph.setTileMapping(cells
                                      .slice(slice.rows().from(), slice.rows().to(), 0)
                                      .slice(slice.cols().from(), slice.cols().to(), 1),
@@ -287,8 +287,8 @@ auto main(int argc, char *argv[]) -> int {
     cells.initialise(*params);
 
 
-//    auto device = lbm::getIpuModel();
-    auto device = lbm::getIpuDevice();
+    auto device = lbm::getIpuModel();
+//    auto device = lbm::getIpuDevice();
     if (!device.has_value()) {
         return EXIT_FAILURE;
     }
@@ -336,11 +336,11 @@ auto main(int argc, char *argv[]) -> int {
     mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
     mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
     mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
-    mapCellsToTiles(graph, tensors["velocities"], tileGranularityMappings);
+    mapCellsToTiles(graph, tensors["velocities"], tileGranularityMappings, true);
 
     tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
     graph.setTileMapping(tensors["counter"], 0);
-    graph.setInitialValue(tensors["counter"], -1);
+    graph.setInitialValue(tensors["counter"], 0);
 
     toc = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count() * 1000;
@@ -368,9 +368,9 @@ auto main(int argc, char *argv[]) -> int {
             Copy(tensors["av_vel"], outStreamAveVelocities)
     );
 
-    auto prog = Repeat(params->maxIters, Sequence{
+    auto prog = Repeat(2, Sequence{
             timestep(graph, *params, tensors, workerGranularityMappings),
-            averageVelocity(graph, *params, tensors, tileGranularityMappings, workerGranularityMappings)
+            averageVelocity(graph, *params, tensors, workerGranularityMappings)
     });
 
     auto engine = lbm::createDebugEngine(graph, {copyCellsToDevice, prog, streamBackToHostProg});
@@ -418,7 +418,7 @@ auto main(int argc, char *argv[]) -> int {
     lbm::captureProfileInfo(engine);
 
     engine.printProfileSummary(std::cout,
-                               OptionFlags{{"showExecutionSteps", "false"}});
+                               OptionFlags{{"showExecutionSteps", "true"}});
 
     std::cerr << "Total compute time was  " << std::right << std::setw(12) << std::setprecision(5)
               << total_compute_time
