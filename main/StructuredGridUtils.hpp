@@ -76,7 +76,7 @@ namespace grids {
     constexpr auto DefaultNumTilesPerIpu = 1216u;
     constexpr auto DefaultNumWorkersPerTile = 6u;
     constexpr auto DefaultMinRowsPerTile = 6u;
-    constexpr auto DefaultMinColsPerTile = 32u;
+    constexpr auto DefaultMinColsPerTile = 6u;
 
 
     class MappingTarget {
@@ -155,14 +155,18 @@ namespace grids {
     auto longAndNarrowStrategy(Size2D size, size_t numTiles,
                                size_t minRowsPerTile = DefaultMinRowsPerTile) -> TileMappings {
 
-        auto numTilesWhenUsingMinRowsConstraint = minRowsPerTile * numTiles;
+        auto numTilesWhenUsingMinRowsConstraint = size.rows() / minRowsPerTile;
         auto numTilesToUse = min(numTiles, numTilesWhenUsingMinRowsConstraint);
         auto tileMappings = TileMappings{};
 
+        auto numRowsPerTile =  (size.rows() / numTilesToUse);
+        auto numTilesWithExtra = size.rows() - (numTilesToUse * numRowsPerTile);
         auto r = 0ul;
         for (auto tile = 0ul; tile < numTilesToUse; tile++) {
-            auto extra = tile < size.rows() % numTilesToUse;
-            auto numRows = unsigned(size.rows() / numTilesToUse) + extra;
+            auto extra = tile < numTilesWithExtra;
+            auto numRows = numRowsPerTile + extra;
+            assert(r < size.rows());
+            assert(r + numRows <= size.rows());
 
             tileMappings.insert({MappingTarget{tile}, {{r, r + numRows},
                                                        {0, size.cols()}}});
@@ -178,14 +182,19 @@ namespace grids {
     auto shortAndWideStrategy(Size2D size, size_t numTiles,
                               size_t minColsPerTile = DefaultMinColsPerTile) -> TileMappings {
 
-        auto numTilesWhenUsingMinColsConstraint = minColsPerTile * numTiles;
+        auto numTilesWhenUsingMinColsConstraint = size.cols() / minColsPerTile;
         auto numTilesToUse = min(numTiles, numTilesWhenUsingMinColsConstraint);
         auto tileMappings = TileMappings{};
 
         auto c = 0ul;
+        auto numColsPerTile =  (size.cols() / numTilesToUse);
+        auto numTilesWithExtra = size.cols() - (numTilesToUse * numColsPerTile);
         for (auto tile = 0ul; tile < numTilesToUse; tile++) {
-            auto extra = tile < size.rows() % numTilesToUse;
-            auto numCols = unsigned(size.cols() / numTilesToUse) + extra;
+            auto extra = tile < numTilesWithExtra;
+            auto numCols = numColsPerTile + extra;
+            assert(c < size.cols());
+            assert(c + numCols <= size.cols());
+
 
             tileMappings.insert({MappingTarget{tile}, {{0, size.rows()},
                                                        {c, c + numCols}}});

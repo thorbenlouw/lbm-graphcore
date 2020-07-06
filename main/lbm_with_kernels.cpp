@@ -413,7 +413,7 @@ auto main(int argc, char *argv[]) -> int {
     mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
     mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
     mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
-    mapCellsToTiles(graph, tensors["velocities"], tileGranularityMappings, true);
+    mapCellsToTiles(graph, tensors["velocities"], tileGranularityMappings);
 
     tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
     graph.setTileMapping(tensors["counter"], 0);
