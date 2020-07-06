@@ -179,17 +179,19 @@ public:
 class AppendReducedSum : public Vertex { // Reduce the per-tile partial sums and append to the average list
 
 public:
-    Input <Vector<float, VectorLayout::SCALED_PTR64, 8>> totalAndCount; // float2 of total|count
+    Input <Vector<float>> totalAndCount; // float2 of total|count
     Input<unsigned> indexToWrite;
     Input<unsigned> myStartIndex; // The index where my array starts
     Input<unsigned> myEndIndex; // My last index
-    Output <Vector<float, VectorLayout::SCALED_PTR32, 4>> finals; // The piece of the array I have
+    Output <Vector<float>> finals; // The piece of the array I have
 
     bool compute() {
 
-        if ((*indexToWrite >= *myStartIndex) && (*indexToWrite <= *myEndIndex)) {
-            float2 tmp = *reinterpret_cast<float2 *>(&totalAndCount);
-            finals[*indexToWrite] = tmp[0] / tmp[1];
+        const auto idx = *indexToWrite;
+        if ((idx >= *myStartIndex) && (idx <= *myEndIndex)) {
+            auto total = totalAndCount[0];
+            auto count = totalAndCount[1];
+            finals[idx] = total / count;
         }
         return true;
     }
@@ -266,13 +268,23 @@ public:
             return false;
         }
 
-        auto assignToCell = [this](const size_t idx, const float2 src[5]) -> void {
-            float2 *f2out = reinterpret_cast<float2 *>(&out[idx]);
-            f2out[0] = src[0];
-            f2out[1] = src[1];
-            f2out[2] = src[2];
-            f2out[3] = src[3];
-            out[idx + 8] = src[4][0];
+        const auto assignToCell = [this](const size_t idx, const float2 src[5]) -> void {
+//            float2 *f2out = reinterpret_cast<float2 *>(&out[idx]);
+//            f2out[0] = src[0];
+//            f2out[1] = src[1];
+//            f2out[2] = src[2];
+//            f2out[3] = src[3];
+//            out[idx + 8] = src[4][0];
+
+            out[0] = src[0][0];
+            out[1] = src[0][1];
+            out[2] = src[1][0];
+            out[3] = src[1][1];
+            out[4] = src[2][0];
+            out[5] = src[2][1];
+            out[6] = src[3][0];
+            out[7] = src[3][1];
+            out[8] = src[4][0];
         };
 
         // Remember layout is (0,0) = bottom left
@@ -290,7 +302,7 @@ public:
         const int southWestCellOffset = +southCellOffset - (int) NumSpeeds;
 
         // Top left - remember layout is (0,0) is bottom left
-        auto topLeft = [=]() -> void {
+        const auto topLeft = [=]() -> void {
             const auto row = (numRows - 1u);
             constexpr auto col = 0u;
             const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -313,7 +325,7 @@ public:
         };
 
         // Top Right
-        auto topRight = [=]() -> void {
+        const auto topRight = [=]() -> void {
             const auto row = (numRows - 1u);
             const auto col = (numCols - 1u);
             const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -336,7 +348,7 @@ public:
         };
 
         // Bottom Left
-        auto bottomLeft = [=]() -> void {
+        const auto bottomLeft = [=]() -> void {
             constexpr auto row = 0u;
             constexpr auto col = 0u;
             const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -359,7 +371,7 @@ public:
         };
 
         // Bottom right
-        auto bottomRight = [=]() -> void {
+        const auto bottomRight = [=]() -> void {
             constexpr auto row = 0u;
             const auto col = (numCols - 1u);
             const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -382,7 +394,7 @@ public:
         };
 
         // Top
-        auto top = [=]() -> void {
+        const auto top = [=]() -> void {
             auto row = (numRows - 1u);
             for (size_t col = 1; col < *numCols - 1; col++) {
                 const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -406,7 +418,7 @@ public:
         };
 
         // Bottom
-        auto bottom = [=]() -> void {
+        const auto bottom = [=]() -> void {
             auto row = 0u;
             for (size_t col = 1; col < *numCols - 1; col++) {
                 const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -429,7 +441,7 @@ public:
             }
         };
         // Left
-        auto left = [=]() -> void {
+        const auto left = [=]() -> void {
             auto col = 0u;
             for (size_t row = 1; row < *numRows - 1; row++) {
                 const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -453,7 +465,7 @@ public:
         };
 
         // Right
-        auto right = [=]() -> void {
+        const auto right = [=]() -> void {
             auto col = numCols - 1;
             for (size_t row = 1; row < *numRows - 1; row++) {
                 const auto cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;
@@ -477,7 +489,7 @@ public:
         };
 
         // Middle
-        auto middle = [=]() -> void {
+        const auto middle = [=]() -> void {
             for (size_t row = 1; row < *numRows - 1; row++) {
                 for (size_t col = 1; col < *numCols - 1; col++) {
                     const int cellIdx = row * (numCols * NumSpeeds) + col * NumSpeeds;

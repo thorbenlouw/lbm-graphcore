@@ -108,7 +108,7 @@ namespace lbm {
         file.open(filename, std::ios::out);
         if (file.is_open()) {
             for (auto i = 0ul; i < av_vels.size(); i++) {
-                file << i << ":\t" << file.precision(12) << std::scientific << av_vels[i] << std::endl;
+                file << i << ":\t" << std::scientific << std::setprecision(12)  << av_vels[i] << std::endl;
             }
             file.close();
             return true;

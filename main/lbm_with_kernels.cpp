@@ -290,10 +290,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     for (const auto &[target, slice] : workerGranularityMappings) {
 
         auto tile = target.ipu() * numTilesPerIpu + target.tile();
-        std::cout << "tile: " << tile << " target: " << target.ipu() << ":" << target.tile() << ":"
-                  << target.worker() <<
-                  "(r: " << slice.rows().from() << ",c: " << slice.cols().from() << ",w: " << slice.width() <<
-                  ",h: " << slice.height() << std::endl;
+
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto v = graph.addVertex(accelerateCs,
                                  "AccelerateFlowVertex",
