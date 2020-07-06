@@ -4,18 +4,15 @@
 // from tqdm import tqdm
 
 #include <cstdlib>
-#include <poplar/Engine.hpp>
 #include <poplar/IPUModel.hpp>
 #include <popops/ElementWise.hpp>
 #include <popops/ScaledAdd.hpp>
 #include <popops/codelets.hpp>
 #include <poputil/TileMapping.hpp>
-#include <poplar/DeviceManager.hpp>
 #include <iomanip>
 #include <iostream>
 #include <poplar/Program.hpp>
 #include <popops/Reduce.hpp>
-#include <fstream>
 #include <cmath>
 #include <chrono>
 #include <algorithm>
@@ -23,30 +20,16 @@
 #include <random>
 
 #include "DoubleRoll.hpp"
+#include "GraphcoreUtils.hpp"
+#include "LbmParams.hpp"
 
 using namespace poplar;
 using namespace poplar::program;
 using namespace popops;
 
-const auto POPLAR_ENGINE_OPTIONS = OptionFlags{
-        {"target.saveArchive",                "archive.a"},
-        {"debug.instrument",                  "true"},
-        {"debug.instrumentCompute",           "true"},
-        {"debug.loweredVarDumpFile",          "vars.capnp"},
-        {"debug.instrumentControlFlow",       "true"},
-        {"debug.computeInstrumentationLevel", "tile"}};
-
-// const auto POPLAR_ENGINE_OPTIONS = OptionFlags{};
 
 // %matplotlib inline
 // %config InlineBackend.figure_format='retina'
-
-auto getIpuModel() -> std::optional<Device> {
-    IPUModel ipuModel;
-    ipuModel.numIPUs = 1;
-    ipuModel.tilesPerIPU = 1216;
-    return {ipuModel.createDevice()};
-}
 
 // # Flow definition
 // maxIter = 200 * 1000
@@ -210,19 +193,6 @@ auto incrementTimestep(Graph &graph, std::map<std::string, Tensor> &tensors) -> 
     return std::move(s);
 }
 
-auto captureProfileInfo(Engine &engine) {
-    std::ofstream graphOfs;
-    graphOfs.open("graph.json", std::ofstream::out | std::ofstream::trunc);
-
-    std::ofstream executionOfs;
-    executionOfs.open("execution.json", std::ofstream::out | std::ofstream::trunc);
-
-    serializeToJSON(graphOfs, engine.getGraphProfile(), false);
-    serializeToJSON(executionOfs, engine.getExecutionProfile(), false);
-
-    graphOfs.close();
-    executionOfs.close();
-}
 
 auto inflowCondition(Graph &graph, std::map<std::string, Tensor> &tensors) -> Program {
     std::cerr << __FUNCTION__ << std::endl;
@@ -343,22 +313,6 @@ Program bounceBack(Graph &graph, std::map<std::string, Tensor> &tensors) {
     return std::move(s);
 }
 
-auto getIpuDevice() -> std::optional<Device> {
-    DeviceManager manager = DeviceManager::createDeviceManager();
-
-    // Attempt to connect to a single IPU
-    for (auto &d : manager.getDevices(poplar::TargetType::IPU, 1)) {
-        std::cerr << "Trying to attach to IPU " << d.getId();
-        if (d.attach()) {
-            std::cerr << " - attached" << std::endl;
-            return {std::move(d)};
-        } else {
-            std::cerr << std::endl;
-        }
-    }
-    std::cerr << "Error attaching to device" << std::endl;
-    return std::nullopt;
-}
 
 auto initialise(Graph &graph, std::map<std::string, Tensor> &tensors,
                 const std::vector<std::tuple<int, int>> &v) -> Program {
@@ -382,10 +336,25 @@ bool isObstacle(unsigned x, unsigned y) {
     return isSquare | isCircle;
 }
 
-auto main() -> int {
+auto main(int argc, char *argv[]) -> int {
+    if (argc != 3) {
+        std::cerr << "Expected usage: " << argv[0] << " <params_file> <obstacles_file>" << std::endl;
+        return EXIT_FAILURE;
+    }
+    auto params = lbm::Params::fromFile(argv[1]);
+    if (!params.has_value()) {
+        std::cerr << "Could not parse parameters file. Aborting" << std::endl;
+        return EXIT_FAILURE;
+    }
+    auto obstacles = lbm::Obstacles::fromFile(params->nx, params->ny, argv[2]);
+    if (!obstacles.has_value()) {
+        std::cerr << "Could not parse obstacles file" << std::endl;
+        return EXIT_FAILURE;
+    }
+
     double total_compute_time = 0.0;
     std::chrono::high_resolution_clock::time_point tic, toc;
-    auto device = getIpuModel();
+    auto device = lbm::getIpuModel();
     //auto device = getIpuDevice();
     if (!device.has_value()) {
         return EXIT_FAILURE;
@@ -497,8 +466,7 @@ auto main() -> int {
 
     auto outStream = graph.addDeviceToHostFIFO("u", FLOAT, 2 * Constants.nx * Constants.ny);
 
-    auto engine = Engine(graph, {initialise(graph, tensors, v), prog, Copy(tensors["u"], outStream)},
-                         POPLAR_ENGINE_OPTIONS);
+    auto engine = lbm::createDebugEngine(graph, {initialise(graph, tensors, v), prog, Copy(tensors["u"], outStream)});
     engine.connectStream(outStream, output_array.get());
     std::cerr << "Loading..." << std::endl;
 
@@ -536,7 +504,7 @@ auto main() -> int {
         std::cerr << "took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
     }
 
-    captureProfileInfo(engine);
+    lbm::captureProfileInfo(engine);
 
     engine.printProfileSummary(std::cout,
                                OptionFlags{{"showExecutionSteps", "false"}});

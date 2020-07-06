@@ -159,7 +159,7 @@ namespace grids {
         auto numTilesToUse = min(numTiles, numTilesWhenUsingMinRowsConstraint);
         auto tileMappings = TileMappings{};
 
-        auto numRowsPerTile =  (size.rows() / numTilesToUse);
+        auto numRowsPerTile = (size.rows() / numTilesToUse);
         auto numTilesWithExtra = size.rows() - (numTilesToUse * numRowsPerTile);
         auto r = 0ul;
         for (auto tile = 0ul; tile < numTilesToUse; tile++) {
@@ -187,7 +187,7 @@ namespace grids {
         auto tileMappings = TileMappings{};
 
         auto c = 0ul;
-        auto numColsPerTile =  (size.cols() / numTilesToUse);
+        auto numColsPerTile = (size.cols() / numTilesToUse);
         auto numTilesWithExtra = size.cols() - (numTilesToUse * numColsPerTile);
         for (auto tile = 0ul; tile < numTilesToUse; tile++) {
             auto extra = tile < numTilesWithExtra;
@@ -233,6 +233,10 @@ namespace grids {
 
             auto col_to = col_from + wide_width;
             for (size_t i = 0u; i < num_wide_cols; i++) {
+                assert(row_from < size.rows());
+                assert(row_to <= size.rows());
+                assert(col_from < size.cols());
+                assert(col_to <= size.cols());
                 tileMapping.insert({MappingTarget{tile}, {{row_from, row_to}, {col_from, col_to}}});
                 col_from += wide_width;
                 col_to = col_from + wide_width;
@@ -241,6 +245,10 @@ namespace grids {
 
             col_to = col_from + nonwide_width;
             for (size_t i = 0u; i < num_nonwide_cols; i++) {
+                assert(row_from < size.rows());
+                assert(row_to <= size.rows());
+                assert(col_from < size.cols());
+                assert(col_to <= size.cols());
                 tileMapping.insert({MappingTarget{tile}, {{row_from, row_to}, {col_from, col_to}}});
                 col_from += nonwide_width;
                 col_to = col_from + nonwide_width;
@@ -254,6 +262,10 @@ namespace grids {
             auto row_to = row_from + nontall_height;
             auto col_to = col_from + wide_width;
             for (size_t i = 0u; i < num_wide_cols; i++) {
+                assert(row_from < size.rows());
+                assert(row_to <= size.rows());
+                assert(col_from < size.cols());
+                assert(col_to <= size.cols());
                 tileMapping.insert({MappingTarget{tile}, {{row_from, row_to}, {col_from, col_to}}});
                 col_from += wide_width;
                 col_to = col_from + wide_width;
@@ -262,6 +274,10 @@ namespace grids {
 
             col_to = col_from + nonwide_width;
             for (size_t i = 0u; i < num_nonwide_cols; i++) {
+                assert(row_from < size.rows());
+                assert(row_to <= size.rows());
+                assert(col_from < size.cols());
+                assert(col_to <= size.cols());
                 tileMapping.insert({MappingTarget{tile}, {{row_from, row_to}, {col_from, col_to}}});
                 col_from += nonwide_width;
                 col_to = col_from + nonwide_width;
@@ -275,31 +291,51 @@ namespace grids {
     }
 
 
-    // TODO: Long and tall might be better than short and wide sometimes?
+    /**
+     * Split a tile's workload into roughly equal chunks for the 6 workers. We try to assign chunks of rows,
+     * but if there are more than 6x cols than rows we switch to a longAndTall strategy and chunk into cols
+     */
     auto workerMappingForTile(MappingTarget target, Slice2D slice,
                               size_t numWorkersPerTile = DefaultNumWorkersPerTile) -> TileMappings {
         const auto tile = target.tile();
         const auto ipu = target.ipu();
         TileMappings workerMappings = {};
-        auto rows = slice.rows().to() - slice.rows().from();
-        auto nontall_height = rows / numWorkersPerTile;
-        auto tall_height = nontall_height + 1;
-        auto num_tall_rows = rows - numWorkersPerTile * nontall_height;
-        auto num_nontall_rows = (rows > num_tall_rows) ? rows - num_tall_rows : 0;
-        auto worker = 0u;
-        auto r = slice.rows().from();
 
-        for (size_t i = 0; i < num_tall_rows; i++) {
-            workerMappings.insert({MappingTarget{tile, worker, ipu},
-                                   {{r, r + tall_height}, {slice.cols().from(), slice.cols().to()}}});
-            r += tall_height;
-            worker++;
-        }
-        for (size_t i = 0; i < num_nontall_rows; i++) {
-            workerMappings.insert({MappingTarget{tile, worker, ipu},
-                                   {{r, r + nontall_height}, {slice.cols().from(), slice.cols().to()}}});
-            r += nontall_height;
-            worker++;
+        const auto useShortAndWideStrategy = slice.width() >= slice.height() * numWorkersPerTile;
+
+        if (useShortAndWideStrategy) {
+            auto numWorkersToUse = min(slice.width(), numWorkersPerTile);
+
+            auto numColsPerWorker = (slice.width() / numWorkersToUse);
+            auto numWorkersWithExtra = slice.width() - (numWorkersToUse * numColsPerWorker);
+            auto c = slice.cols().from();
+            for (auto worker = 0ul; worker < numWorkersToUse; worker++) {
+                auto extra = worker < numWorkersWithExtra;
+                auto numCols = numColsPerWorker + extra;
+                assert(c < slice.cols().to());
+                assert(c + numCols <= slice.cols().to());
+
+                workerMappings.insert({MappingTarget{tile, worker, ipu}, {
+                        {slice.rows().from(), slice.rows().to()}, {c, c + numCols}
+                }});
+                c += numCols;
+            }
+        } else {
+            auto numWorkersToUse = min(slice.height(), numWorkersPerTile);
+
+            auto numRowsPerWorker = (slice.height() / numWorkersToUse);
+            auto numWorkersWithExtra = slice.height() - (numWorkersToUse * numRowsPerWorker);
+            auto r = slice.rows().from();
+            for (auto worker = 0ul; worker < numWorkersToUse; worker++) {
+                auto extra = worker < numWorkersWithExtra;
+                auto numRows = numRowsPerWorker + extra;
+                assert(r < slice.rows().to());
+                assert(r + numRows <= slice.rows().to());
+
+                workerMappings.insert({MappingTarget{tile, worker, ipu}, {{r, r + numRows},
+                                                             {slice.cols().from(), slice.cols().to()}}});
+                r += numRows;
+            }
         }
         return workerMappings;
     }
