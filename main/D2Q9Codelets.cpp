@@ -172,24 +172,35 @@ public:
 };
 
 /**
- * Take a partial list of velocities and their counts, determine the  total velocity and total count, and then
- * record the average (total/count) at the given index in the array
+ *  The output array of average velocities is spread throughout the distributed memories. We give each
+ *  tile a vertex that knows what bits of the array are mapped to it. The totalAndCount is broadcast to
+ *  each tile, and only the tile owning the memory writes it.
  */
 class AppendReducedSum : public Vertex { // Reduce the per-tile partial sums and append to the average list
 
 public:
-    Input <Vector<float, VectorLayout::SCALED_PTR64, 8>> totalAndCountPartials;
-    InOut<uint32_t> index;
-    Input<unsigned> numPartials;
-    Output <Vector<float, VectorLayout::SCALED_PTR32, 4>> finals;
+    Input <Vector<float, VectorLayout::SCALED_PTR64, 8>> totalAndCount; // float2 of total|count
+    Input<unsigned> indexToWrite;
+    Input<unsigned> myStartIndex; // The index where my array starts
+    Input<unsigned> myEndIndex; // My last index
+    Output <Vector<float, VectorLayout::SCALED_PTR32, 4>> finals; // The piece of the array I have
 
     bool compute() {
 
-        float2 tmp = {0.0f, 0.0f};
-        for (auto i = 0u; i < *numPartials; i++) {
-            tmp += *reinterpret_cast<float2 *>(&totalAndCountPartials[i * 2]);
+        if ((*indexToWrite >= *myStartIndex) && (*indexToWrite <= *myEndIndex)) {
+            float2 tmp = *reinterpret_cast<float2 *>(&totalAndCount);
+            finals[*indexToWrite] = tmp[0] / tmp[1];
         }
-        finals[(*index)++] = tmp[0] / tmp[1];
+        return true;
+    }
+};
+
+class IncrementIndex : public Vertex {
+public:
+    InOut<unsigned> index;
+
+    auto compute() -> bool {
+        (*index)++;
         return true;
     }
 };

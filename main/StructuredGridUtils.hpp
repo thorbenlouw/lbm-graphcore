@@ -149,6 +149,53 @@ namespace grids {
     };
 
     /**
+   * The number of cols is less than the minimum but there are many rows, so we chunk vertically, respecting
+     the min rows per tile given
+   */
+    auto longAndNarrowStrategy(Size2D size, size_t numTiles,
+                               size_t minRowsPerTile = DefaultMinRowsPerTile) -> TileMappings {
+
+        auto numTilesWhenUsingMinRowsConstraint = minRowsPerTile * numTiles;
+        auto numTilesToUse = min(numTiles, numTilesWhenUsingMinRowsConstraint);
+        auto tileMappings = TileMappings{};
+
+        auto r = 0ul;
+        for (auto tile = 0ul; tile < numTilesToUse; tile++) {
+            auto extra = tile < size.rows() % numTilesToUse;
+            auto numRows = unsigned(size.rows() / numTilesToUse) + extra;
+
+            tileMappings.insert({MappingTarget{tile}, {{r, r + numRows},
+                                                       {0, size.cols()}}});
+            r += numRows;
+        }
+
+        return tileMappings;
+    };
+
+    /**
+   * The number of rows is less than the minimum, but there are many columns. We chunk it horizontally
+   */
+    auto shortAndWideStrategy(Size2D size, size_t numTiles,
+                              size_t minColsPerTile = DefaultMinColsPerTile) -> TileMappings {
+
+        auto numTilesWhenUsingMinColsConstraint = minColsPerTile * numTiles;
+        auto numTilesToUse = min(numTiles, numTilesWhenUsingMinColsConstraint);
+        auto tileMappings = TileMappings{};
+
+        auto c = 0ul;
+        for (auto tile = 0ul; tile < numTilesToUse; tile++) {
+            auto extra = tile < size.rows() % numTilesToUse;
+            auto numCols = unsigned(size.cols() / numTilesToUse) + extra;
+
+            tileMappings.insert({MappingTarget{tile}, {{0, size.rows()},
+                                                       {c, c + numCols}}});
+            c += numCols;
+        }
+
+        return tileMappings;
+    };
+
+    /**
      * The general case grid decomposition for large problems on one ipu
      */
     auto generalGridStrategy(Size2D size, size_t numTiles, size_t minRowsPerTile = DefaultMinRowsPerTile,
@@ -219,6 +266,7 @@ namespace grids {
     }
 
 
+    // TODO: Long and tall might be better than short and wide sometimes?
     auto workerMappingForTile(MappingTarget target, Slice2D slice,
                               size_t numWorkersPerTile = DefaultNumWorkersPerTile) -> TileMappings {
         const auto tile = target.tile();
@@ -228,7 +276,7 @@ namespace grids {
         auto nontall_height = rows / numWorkersPerTile;
         auto tall_height = nontall_height + 1;
         auto num_tall_rows = rows - numWorkersPerTile * nontall_height;
-        auto num_nontall_rows = (rows >  num_tall_rows) ? rows - num_tall_rows : 0;
+        auto num_nontall_rows = (rows > num_tall_rows) ? rows - num_tall_rows : 0;
         auto worker = 0u;
         auto r = slice.rows().from();
 
@@ -259,6 +307,12 @@ namespace grids {
         if (size.cols() * size.rows() < minColsPerTile * minRowsPerTile) {
             // This is unlikely for a real case! Not even going to try and optimise for it
             return singleTileStrategy(size);
+        } else if (size.cols() < minColsPerTile) {
+            // We have something that's narrow but long, so chop it up by rows
+            return longAndNarrowStrategy(size, numTiles, minRowsPerTile);
+        } else if (size.rows() < minRowsPerTile) {
+            // We have something that's wide but not long, so chop it up by cols
+            return shortAndWideStrategy(size, numTiles, minColsPerTile);
         } else if (size.cols() * size.rows() < numTiles * minColsPerTile * minRowsPerTile) {
             // We'll use tiles of 64x6
             return minSizeGridStrategy(size, minRowsPerTile, minColsPerTile);
@@ -345,7 +399,7 @@ namespace grids {
 
             auto left = (l.has_value()) ? std::optional<Slice2D>{
                     {{y, y + h},
-                            { *l, *l + 1}}} : std::nullopt;
+                            {*l, *l + 1}}} : std::nullopt;
             auto right = r.has_value()
                          ? std::optional<Slice2D>{{{y, y + h},
                                                           {*r, *r + 1}}}

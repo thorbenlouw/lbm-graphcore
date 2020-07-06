@@ -39,88 +39,153 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
 
 
     const auto numIpus = graph.getTarget().getNumIPUs();
-    const auto numTiles = graph.getTarget().getNumTiles();
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / numIpus;
     const auto numWorkers = graph.getTarget().getNumWorkerContexts();
 
 
     ComputeSet csVel = graph.addComputeSet("normedVelocity");
     ComputeSet csMaskedPartial = graph.addComputeSet("maskedPartial");
     ComputeSet csTileReducedPartial = graph.addComputeSet("perTileReduce");
+    ComputeSet csIpuReducedPartial = graph.addComputeSet("perIpuReduce");
+    ComputeSet csFinalReduce = graph.addComputeSet("finalReduce");
+    ComputeSet csAppendResult = graph.addComputeSet("appendReducedSum");
+
 
     for (const auto &[target, slice] : workerLevelMappings) {
-        auto tile = target.ipu() * numTiles + target.tile();
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
+        /* Step 1. On each worker, calculate the the local normed velocity for the slice of cells we own */
 
-        auto v = graph.addVertex(csVel,
-                                 "NormedVelocityVertex",
-                                 {{"cells",    applySlice(tensors["cells"], slice)},
-                                  {"numCells", numCellsForThisWorker},
-                                  {"vels",     applySlice(tensors["velocities"], slice)}});
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
+        auto normedVelocityVertex = graph.addVertex(csVel,
+                                                    "NormedVelocityVertex",
+                                                    {{"cells",    applySlice(tensors["cells"], slice)},
+                                                     {"numCells", numCellsForThisWorker},
+                                                     {"vels",     applySlice(tensors["velocities"], slice)}});
+        graph.setCycleEstimate(normedVelocityVertex, numCellsForThisWorker);
+        graph.setTileMapping(normedVelocityVertex, tile);
 
         auto toPartialIdx = [=](grids::MappingTarget target) -> size_t {
-            auto seq_worker = target.ipu() * numTiles * numWorkers + target.tile() * numWorkers + target.worker();
+            auto seq_worker = target.ipu() * numTilesPerIpu * numWorkers + target.tile() * numWorkers + target.worker();
             return seq_worker;
         };
         auto partialSlice = grids::Slice2D{{toPartialIdx(target), toPartialIdx(target) + 1},
-                                           {0,                    1}};
-        v = graph.addVertex(csMaskedPartial,
-                            "MaskedSumPartial",
-                            {{"velocities",    applySlice(tensors["velocities"], slice)},
-                             {"numCells",      numCellsForThisWorker},
-                             {"totalAndCount", applySlice(tensors["perWorkerPartials"], partialSlice)},
-                             {"obstacles",     applySlice(tensors["obstacles"], slice)}}
+                                           {0,                    2}};
+        /* Step 2. On each worker, calculate the the masked sum and count (i.e. only those where no obstacle) */
+        auto maskedSumPartialVertex = graph.addVertex(csMaskedPartial,
+                                                      "MaskedSumPartial",
+                                                      {{"velocities",    applySlice(tensors["velocities"], slice)},
+                                                       {"numCells",      numCellsForThisWorker},
+                                                       {"totalAndCount", applySlice(tensors["perWorkerPartials"],
+                                                                                    partialSlice)},
+                                                       {"obstacles",     applySlice(tensors["obstacles"], slice)}}
         );
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-
+        graph.setCycleEstimate(maskedSumPartialVertex, numCellsForThisWorker);
+        graph.setTileMapping(maskedSumPartialVertex, tile);
     }
 
+    /* Step 3. On each tile, calculate sum and count of all workers */
     for (auto ipu = 0u; ipu < numIpus; ipu++) {
-        for (auto tile = 0u; tile < numTiles; tile++) {
-            auto seq_tile = ipu * numTiles + tile;
+        for (auto tile = 0u; tile < numTilesPerIpu; tile++) {
+            auto seq_tile = ipu * numTilesPerIpu + tile;
             auto allWorkerPartialsSlice = grids::Slice2D{{seq_tile * numWorkers, (seq_tile + 1) * numWorkers},
-                                                         {0,                     1}};
+                                                         {0,                     2}};
             auto resultSlice = grids::Slice2D{{seq_tile, seq_tile + 1},
-                                              {0,        1}};
-            auto v = graph.addVertex(csTileReducedPartial,
-                                     "ReducePartials",
-                                     {{"totalAndCountPartials", applySlice(tensors["perWorkerPartials"],
-                                                                           allWorkerPartialsSlice)},
-                                      {"numPartials",           numWorkers},
-                                      {"totalAndCount",         applySlice(tensors["perTilePartials"], resultSlice)},
-                                     }
+                                              {0,        2}};
+            auto perTileReduceVertex = graph.addVertex(csTileReducedPartial,
+                                                       "ReducePartials",
+                                                       {{"totalAndCountPartials", applySlice(
+                                                               tensors["perWorkerPartials"],
+                                                               allWorkerPartialsSlice)},
+                                                        {"numPartials",           numWorkers},
+                                                        {"totalAndCount",         applySlice(tensors["perTilePartials"],
+                                                                                             resultSlice)},
+                                                       }
             );
-            graph.setCycleEstimate(v, numWorkers);
-            graph.setTileMapping(v, tile);
+            graph.setCycleEstimate(perTileReduceVertex, numWorkers * 4);
+            graph.setTileMapping(perTileReduceVertex, tile);
         }
     }
 
-    // TODO if numIpus > 1, then we need to add a reducer over all the IPUs too!
+    /* Step 4. On each IPU, calculate sum and count of all tiles */
+    for (auto ipu = 0u; ipu < numIpus; ipu++) {
+        auto allTilesPartialsSlice = grids::Slice2D{{ipu * numTilesPerIpu, (ipu + 1) * numTilesPerIpu},
+                                                    {0,                    2}};
+        auto perIpuReduceVertex = graph.addVertex(csIpuReducedPartial,
+                                                  "ReducePartials",
+                                                  {{"totalAndCountPartials", applySlice(tensors["perTilePartials"],
+                                                                                        allTilesPartialsSlice)},
+                                                   {"numPartials",           numTilesPerIpu},
+                                                   {"totalAndCount",         tensors["perIpuPartials"].slice(ipu,
+                                                                                                             ipu + 1,
+                                                                                                             0).flatten()},
+                                                  }
+        );
+        graph.setCycleEstimate(perIpuReduceVertex, numTilesPerIpu);
+        graph.setTileMapping(perIpuReduceVertex, ipu * numTilesPerIpu);
+    }
 
-    ComputeSet finalCs = graph.addComputeSet("appendReducedSum");
+    /* Step 5. Calculate the total and count over all IPUs */
+    auto finalReduceVertex = graph.addVertex(csFinalReduce,
+                                             "ReducePartials",
+                                             {{"totalAndCountPartials", tensors["perIpuPartials"].flatten()},
+                                              {"numPartials",           numIpus},
+                                              {"totalAndCount",         tensors["reducedSumAndCount"].flatten()},
+                                             }
+    );
+    graph.setCycleEstimate(finalReduceVertex, numWorkers);
+    graph.setTileMapping(finalReduceVertex, 0);
 
-    auto v = graph.addVertex(finalCs,
-                             "AppendReducedSum", // Create a vertex of this
-                             {{"totalAndCountPartials", tensors["perTilePartials"].flatten()},  // Connect input 'a' of the
-                              {"index",                 tensors["counter"]},   // Connect input 'b' of the
-                              {"numPartials",           numTiles},
-                              {"finals",                tensors["av_vel"]}
-                             });
-    graph.setCycleEstimate(v, numTiles);
-    graph.setTileMapping(v, 0);
-    return Sequence(Execute(csVel), Execute(csMaskedPartial), Execute(finalCs));
+    /* Step 6. Calculate the average and write it to the relevant place in the array. This happens on every tile,
+     * because each tile owns a piece of cells, and only the owner of the piece with the index actually writes */
+    auto avVelsTileMapping = grids::partitionGridToTilesForSingleIpu(
+            {params.maxIters, 1},
+            numTilesPerIpu * numIpus
+    );
+
+    for (const auto &[target, slice] : avVelsTileMapping) {
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
+
+        auto appendReducedSumVertex = graph.addVertex(csAppendResult,
+                                                      "AppendReducedSum",
+                                                      {{"totalAndCount", tensors["reducedSumAndCount"].flatten()},
+                                                       {"indexToWrite",  tensors["counter"]},
+                                                       {"myStartIndex",  slice.rows().from()},
+                                                       {"myEndIndex",    slice.rows().to() - 1},
+                                                       {"finals",        tensors["av_vel"].slice(slice.rows().from(),
+                                                                                                 slice.rows().to(),
+                                                                                                 0).flatten()},
+                                                      }
+        );
+        graph.setTileMapping(applySlice(tensors["av_vel"], slice), tile);
+        graph.setCycleEstimate(appendReducedSumVertex, 16);
+        graph.setTileMapping(appendReducedSumVertex, tile);
+
+    }
+
+
+    ComputeSet incrementCs = graph.addComputeSet("increment");
+
+    auto incrementVertex = graph.addVertex(incrementCs,
+                                           "IncrementIndex", // Create a vertex of this
+                                           {{"index", tensors["counter"]}   // Connect input 'b' of the
+                                           });
+    graph.setCycleEstimate(incrementVertex, 13);
+    graph.setTileMapping(incrementVertex, 0);
+
+
+    return Sequence(Execute(csVel), Execute(csMaskedPartial), Execute(csTileReducedPartial),
+                    Execute(csIpuReducedPartial), Execute(csFinalReduce), Execute(csAppendResult),
+                    Execute(incrementCs));
 }
 
 auto
 collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
-    const auto numTiles = graph.getTarget().getNumTiles();
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
 
     ComputeSet reboundCs = graph.addComputeSet("collision");
 
     for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTiles + target.tile();
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
 
         auto v = graph.addVertex(reboundCs,
@@ -140,12 +205,12 @@ collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::Ti
 }
 
 auto rebound(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
-    const auto numTiles = graph.getTarget().getNumTiles();
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
 
     ComputeSet reboundCs = graph.addComputeSet("rebound");
 
     for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTiles + target.tile();
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto v = graph.addVertex(reboundCs,
                                  "ReboundVertex",
@@ -165,14 +230,14 @@ auto rebound(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids:
 auto propagate(Graph &graph,
                const lbm::Params &params, TensorMap &tensors,
                grids::TileMappings &mappings) -> Program {
-    const auto numTiles = graph.getTarget().getNumTiles();
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
 
     ComputeSet propagateCs = graph.addComputeSet("propagate");
     auto cells = tensors["cells"];
 
     auto fullSize = grids::Size2D(params.ny, params.nx);
     for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTiles + target.tile();
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto halos = grids::Halos::forSlice(slice, fullSize);
         auto v = graph.addVertex(propagateCs,
@@ -199,7 +264,7 @@ auto propagate(Graph &graph,
 
 auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors) -> Program {
 
-    const auto numTiles = graph.getTarget().getNumTiles();
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
     const auto numWorkers = graph.getTarget().getNumWorkerContexts();
 
 
@@ -215,7 +280,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     // means redistributing data from cells and obstacles (i.e. keep tiles busy rather than minimise data transfer)
     auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
             {1, params.ny},
-            numTiles
+            numTilesPerIpu
     );
     auto workerGranularityMappings = grids::toWorkerMappings(
             tileGranularityMappings,
@@ -223,7 +288,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     );
 
     for (const auto &[target, slice] : workerGranularityMappings) {
-        auto tile = target.ipu() * numTiles + target.tile();
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto v = graph.addVertex(accelerateCs,
                                  "AccelerateFlowVertex",
@@ -294,11 +359,13 @@ auto main(int argc, char *argv[]) -> int {
     }
 
 
-    auto numTiles = device->getTarget().getNumTiles();
+    auto numTilesPerIpu = device->getTarget().getNumTiles() / device->getTarget().getNumIPUs();
     auto numWorkers = device->getTarget().getNumWorkerContexts();
+    auto numIpus = device->getTarget().getNumIPUs();
+
     auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
             {params->ny, params->nx},
-            numTiles
+            numTilesPerIpu
     );
     auto workerGranularityMappings = grids::toWorkerMappings(
             tileGranularityMappings,
@@ -318,20 +385,30 @@ auto main(int argc, char *argv[]) -> int {
     popops::addCodelets(graph);
     graph.addCodelets("D2Q9Codelets.cpp");
 
-    tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters}, poplar::VariableMappingMethod::LINEAR,
+    tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
                                           "av_vel");
     tensors["cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds}, "cells");
     tensors["tmp_cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds}, "tmp_cells");
     tensors["obstacles"] = graph.addVariable(BOOL, {params->ny, params->nx}, "obstacles");
     tensors["velocities"] = graph.addVariable(FLOAT, {params->ny, params->nx}, "velocities");
     tensors["perWorkerPartials"] = graph.addVariable(FLOAT,
-                                                     {numWorkers * numTiles, 2}, poplar::VariableMappingMethod::LINEAR,
+                                                     {numWorkers * numTilesPerIpu * numIpus, 2},
+                                                     poplar::VariableMappingMethod::LINEAR,
                                                      "perWorkerPartials");
 
     tensors["perTilePartials"] = graph.addVariable(FLOAT,
-                                                   {numTiles, 2}, poplar::VariableMappingMethod::LINEAR,
+                                                   {numTilesPerIpu * numIpus, 2}, poplar::VariableMappingMethod::LINEAR,
                                                    "perTilePartials");
 
+    tensors["perIpuPartials"] = graph.addVariable(FLOAT,
+                                                  {numIpus, 2},
+                                                  "perTilePartials");
+    for (auto i = 0u; i < numIpus; i++) {
+        graph.setTileMapping(tensors["perIpuPartials"][i], i * numTilesPerIpu);
+    }
+
+    tensors["reducedSumAndCount"] = graph.addVariable(FLOAT, {1, 2}, "reducedSumAndCount");
+    graph.setTileMapping(tensors["reducedSumAndCount"], 0);
 
     mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
     mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
@@ -357,10 +434,6 @@ auto main(int argc, char *argv[]) -> int {
     auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
                                                          lbm::NumSpeeds * params->nx * params->ny);
     auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT, lbm::NumSpeeds * params->nx * params->ny);
-
-    for (const auto &[k, v]: tensors) {
-        std::cout << k << std::endl;
-    }
 
     auto copyCellsToDevice = Copy(inStreamCells, tensors["cells"]);
     auto streamBackToHostProg = Sequence(
