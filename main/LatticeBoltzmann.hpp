@@ -13,6 +13,10 @@ namespace lbm {
     constexpr auto NumSpeeds = 9u;
     using Speeds  = float[NumSpeeds];
 
+    enum SpeedIndexes {
+        Middle, East, North, West, South, NorthEast, NorthWest, SouthWest, SouthEast
+    };
+
     class Cells {
     private:
         const size_t nx;

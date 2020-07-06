@@ -243,23 +243,38 @@ auto propagate(Graph &graph,
         auto v = graph.addVertex(propagateCs,
                                  "PropagateVertex",
                                  {
-                                         {"in",              applySlice(cells, slice)},
-                                         {"out",             applySlice(tensors["tmp_cells"], slice)},
-                                         {"numRows",         slice.height()},
-                                         {"numCols",         slice.width()},
-                                         {"haloTop",         applySlice(cells, *halos.top)},
-                                         {"haloBottom",      applySlice(cells, *halos.bottom)},
-                                         {"haloLeft",        applySlice(cells, *halos.left)},
-                                         {"haloRight",       applySlice(cells, *halos.right)},
-                                         {"haloTopLeft",     applySlice(cells, *halos.topLeft)[0]},
-                                         {"haloTopRight",    applySlice(cells, *halos.topRight)[0]},
-                                         {"haloBottomLeft",  applySlice(cells, *halos.bottomLeft)[0]},
-                                         {"haloBottomRight", applySlice(cells, *halos.bottomRight)[0]},
+                                         {"in",                applySlice(cells, slice)},
+                                         {"out",               applySlice(tensors["tmp_cells"], slice)},
+                                         {"numRows",           slice.height()},
+                                         {"numCols",           slice.width()},
+                                         {"haloTop",           applySlice(cells, *halos.top)},
+                                         {"haloBottom",        applySlice(cells, *halos.bottom)},
+                                         {"haloLeft",          applySlice(cells, *halos.left)},
+                                         {"haloRight",         applySlice(cells, *halos.right)},
+                                         {"haloTopLeft",       applySlice(cells, *halos.topLeft)[lbm::SpeedIndexes::NorthWest]},
+                                         {"haloTopRight",      applySlice(cells, *halos.topRight)[lbm::SpeedIndexes::NorthEast]},
+                                         {"haloBottomLeft",    applySlice(cells, *halos.bottomLeft)[lbm::SpeedIndexes::SouthWest]},
+                                         {"haloBottomRight",   applySlice(cells, *halos.bottomRight)[lbm::SpeedIndexes::SouthEast]},
                                  });
         graph.setCycleEstimate(v, numCellsForThisWorker);
         graph.setTileMapping(v, tile);
     }
-    return Execute(propagateCs);
+
+
+    Tensor haloTop0;
+    for (const auto &[target, slice] : mappings) {
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
+        auto numCellsForThisWorker = slice.width() * slice.height();
+        auto halos = grids::Halos::forSlice(slice, fullSize);
+        haloTop0 = applySlice(cells, *halos.top);
+    }
+    return Sequence{
+//            PrintTensor("haloTop0", haloTop0),
+
+            Execute(propagateCs),
+//            PrintTensor("cells", cells),
+//            PrintTensor("tmp_cells", tensors["tmp_cells"]),
+    };
 }
 
 auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors) -> Program {
@@ -302,7 +317,13 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
         graph.setCycleEstimate(v, numCellsForThisWorker);
         graph.setTileMapping(v, tile);
     }
-    return Execute(accelerateCs);
+    return Sequence{
+            Execute(accelerateCs),
+//            PrintTensor("cellsSecondRowFromTop", cellsSecondRowFromTop),
+//            PrintTensor("obstaclesSecondRowFromTop", obstaclesSecondRowFromTop),
+//            PrintTensor("cells", cells),
+//            PrintTensor("obstacles", obstacles),
+    };
 }
 
 
@@ -436,23 +457,26 @@ auto main(int argc, char *argv[]) -> int {
     auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
                                                          lbm::NumSpeeds * params->nx * params->ny);
     auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT, lbm::NumSpeeds * params->nx * params->ny);
+    auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL, params->nx * params->ny);
 
-    auto copyCellsToDevice = Copy(inStreamCells, tensors["cells"]);
+    auto copyCellsAndObstaclesToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
+                                                  Copy(inStreamObstacles, tensors["obstacles"]));
     auto streamBackToHostProg = Sequence(
             Copy(tensors["cells"], outStreamFinalCells),
             Copy(tensors["av_vel"], outStreamAveVelocities)
     );
 
-    auto prog = Repeat(2, Sequence{
+    auto prog = Repeat(params->maxIters, Sequence{
             timestep(graph, *params, tensors, workerGranularityMappings),
             averageVelocity(graph, *params, tensors, workerGranularityMappings)
     });
 
-    auto engine = lbm::createDebugEngine(graph, {copyCellsToDevice, prog, streamBackToHostProg});
+    auto engine = lbm::createDebugEngine(graph, {copyCellsAndObstaclesToDevice, prog, streamBackToHostProg});
     auto av_vels = std::vector<float>(params->maxIters, 0.0f);
     engine.connectStream(outStreamAveVelocities, av_vels.data());
     engine.connectStream(outStreamFinalCells, cells.getData());
     engine.connectStream(inStreamCells, cells.getData());
+    engine.connectStream(inStreamObstacles, obstacles->getData());
     std::cerr << "Loading..." << std::endl;
 
     engine.load(device.value());
@@ -476,6 +500,7 @@ auto main(int argc, char *argv[]) -> int {
     engine.run(1);
     toc = std::chrono::high_resolution_clock::now();
     diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+    total_compute_time += diff;
     std::cerr << "took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
 
     std::cerr << "Running copy to host step ";
@@ -490,14 +515,18 @@ auto main(int argc, char *argv[]) -> int {
     lbm::writeAverageVelocities("av_vels.dat", av_vels);
     lbm::writeResults("final_state.dat", *params, *obstacles, cells);
 
-    lbm::captureProfileInfo(engine);
+//    lbm::captureProfileInfo(engine);
+//
+//    engine.printProfileSummary(std::cout,
+//                               OptionFlags{{"showExecutionSteps", "true"}});
 
-    engine.printProfileSummary(std::cout,
-                               OptionFlags{{"showExecutionSteps", "true"}});
-
-    std::cerr << "Total compute time was  " << std::right << std::setw(12) << std::setprecision(5)
+    std::cout << "==done==" << std::endl;
+    std::cout << "Total compute time was  " << std::right << std::setw(12) << std::setprecision(5)
               << total_compute_time
               << "s" << std::endl;
+
+    std::cout << "Reynolds number:  " << std::right << std::setw(12) << std::setprecision(5)
+              << lbm::reynoldsNumber(*params, av_vels[params->maxIters - 1]) << std::endl;
 
     return EXIT_SUCCESS;
 }

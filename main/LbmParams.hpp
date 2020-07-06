@@ -13,6 +13,8 @@
 
 namespace lbm {
 
+
+
     class Params {
     public:
         const size_t nx;
@@ -74,7 +76,7 @@ namespace lbm {
     public:
         Obstacles() = delete;
 
-        auto getData() -> const bool * {
+        auto getData() -> bool * {
             return data.get();
         };
 
