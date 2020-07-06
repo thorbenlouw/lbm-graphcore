@@ -279,7 +279,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     // For now, let's try the approach of spreading accelerate computation over more tiles, even if that
     // means redistributing data from cells and obstacles (i.e. keep tiles busy rather than minimise data transfer)
     auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
-            {1, params.ny},
+            {1, params.nx},
             numTilesPerIpu
     );
     auto workerGranularityMappings = grids::toWorkerMappings(
@@ -288,7 +288,12 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     );
 
     for (const auto &[target, slice] : workerGranularityMappings) {
+
         auto tile = target.ipu() * numTilesPerIpu + target.tile();
+        std::cout << "tile: " << tile << " target: " << target.ipu() << ":" << target.tile() << ":"
+                  << target.worker() <<
+                  "(r: " << slice.rows().from() << ",c: " << slice.cols().from() << ",w: " << slice.width() <<
+                  ",h: " << slice.height() << std::endl;
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto v = graph.addVertex(accelerateCs,
                                  "AccelerateFlowVertex",
