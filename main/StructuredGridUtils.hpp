@@ -384,6 +384,7 @@ namespace grids {
 
     class Halos {
     public:
+        // IMPORTANT! (0,0) is considered bottom left
         const std::optional<Slice2D> top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight;
 
         Halos() = delete;
@@ -412,15 +413,15 @@ namespace grids {
 
             std::optional<size_t> t, l, r, b;
             if (wraparound) {
-                t = (ny + y - 1) % ny;
+                t = (ny + y + 1) % ny;
                 l = (nx + x - 1) % nx;
                 r = (nx + x + w) % nx;
-                b = (ny + y + h) % ny;
+                b = (ny + y - h) % ny;
             } else {
-                t = (y > 0) ? std::optional<size_t>{y - 1} : std::nullopt;
+                t = (y < ny - 1) ? std::optional<size_t>{y + 1} : std::nullopt;
                 l = (x > 0) ? std::optional<size_t>{x - 1} : std::nullopt;
                 r = (x + w < nx) ? std::optional<size_t>{x + w} : std::nullopt;
-                b = (y + h < ny) ? std::optional<size_t>{y + h} : std::nullopt;
+                b = (y > 0) ? std::optional<size_t>{y - 1} : std::nullopt;
             }
 
             auto topLeft = (l.has_value() && t.has_value())
@@ -431,7 +432,7 @@ namespace grids {
             auto top = (t.has_value())
                        ? std::optional<Slice2D>{
                             {{*t, *t + 1},
-                                    {*l, *l + 1}}}
+                                    {x, x + w }}}
                        : std::nullopt;
 
             auto topRight = (t.has_value() && r.has_value())
@@ -443,7 +444,7 @@ namespace grids {
                             : std::nullopt;
 
             auto left = (l.has_value()) ? std::optional<Slice2D>{
-                    {{y, y + h},
+                    {{y, y + h },
                             {*l, *l + 1}}} : std::nullopt;
             auto right = r.has_value()
                          ? std::optional<Slice2D>{{{y, y + h},
@@ -456,7 +457,7 @@ namespace grids {
             auto bottom = (b.has_value())
                           ? std::optional<Slice2D>{
                             {{*b, *b + 1},
-                                    {x, x + w}}}
+                                    {x, x + w }}}
                           : std::nullopt;
             auto bottomRight = (b.has_value() && r.has_value())
                                ? std::optional<Slice2D>{

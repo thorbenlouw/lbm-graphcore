@@ -156,7 +156,9 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
                                                                                                  0).flatten()},
                                                       }
         );
-        graph.setTileMapping(applySlice(tensors["av_vel"], slice), tile);
+        graph.setTileMapping(tensors["av_vel"].slice(slice.rows().from(),
+                                                     slice.rows().to(),
+                                                     0), tile);
         graph.setCycleEstimate(appendReducedSumVertex, 16);
         graph.setTileMapping(appendReducedSumVertex, tile);
 
@@ -243,38 +245,28 @@ auto propagate(Graph &graph,
         auto v = graph.addVertex(propagateCs,
                                  "PropagateVertex",
                                  {
-                                         {"in",                applySlice(cells, slice)},
-                                         {"out",               applySlice(tensors["tmp_cells"], slice)},
-                                         {"numRows",           slice.height()},
-                                         {"numCols",           slice.width()},
-                                         {"haloTop",           applySlice(cells, *halos.top)},
-                                         {"haloBottom",        applySlice(cells, *halos.bottom)},
-                                         {"haloLeft",          applySlice(cells, *halos.left)},
-                                         {"haloRight",         applySlice(cells, *halos.right)},
-                                         {"haloTopLeft",       applySlice(cells, *halos.topLeft)[lbm::SpeedIndexes::NorthWest]},
-                                         {"haloTopRight",      applySlice(cells, *halos.topRight)[lbm::SpeedIndexes::NorthEast]},
-                                         {"haloBottomLeft",    applySlice(cells, *halos.bottomLeft)[lbm::SpeedIndexes::SouthWest]},
-                                         {"haloBottomRight",   applySlice(cells, *halos.bottomRight)[lbm::SpeedIndexes::SouthEast]},
+                                         {"in",              applySlice(cells, slice)},
+                                         {"out",             applySlice(tensors["tmp_cells"], slice)},
+                                         {"numRows",         slice.height()},
+                                         {"numCols",         slice.width()},
+                                         {"haloTop",         applySlice(cells, *halos.top)},
+                                         {"haloBottom",      applySlice(cells, *halos.bottom)},
+                                         {"haloLeft",        applySlice(cells, *halos.left)},
+                                         {"haloRight",       applySlice(cells, *halos.right)},
+                                         {"haloTopLeft",     applySlice(cells,
+                                                                        *halos.topLeft)[lbm::SpeedIndexes::SouthEast]}, // flipped directions!
+                                         {"haloTopRight",    applySlice(cells,
+                                                                        *halos.topRight)[lbm::SpeedIndexes::SouthWest]},// flipped directions!
+                                         {"haloBottomLeft",  applySlice(cells,
+                                                                        *halos.bottomLeft)[lbm::SpeedIndexes::NorthEast]},// flipped directions!
+                                         {"haloBottomRight", applySlice(cells,
+                                                                        *halos.bottomRight)[lbm::SpeedIndexes::NorthWest]},// flipped directions!
                                  });
         graph.setCycleEstimate(v, numCellsForThisWorker);
         graph.setTileMapping(v, tile);
     }
 
-
-    Tensor haloTop0;
-    for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
-        auto numCellsForThisWorker = slice.width() * slice.height();
-        auto halos = grids::Halos::forSlice(slice, fullSize);
-        haloTop0 = applySlice(cells, *halos.top);
-    }
-    return Sequence{
-//            PrintTensor("haloTop0", haloTop0),
-
-            Execute(propagateCs),
-//            PrintTensor("cells", cells),
-//            PrintTensor("tmp_cells", tensors["tmp_cells"]),
-    };
+    return Execute(propagateCs);
 }
 
 auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors) -> Program {
@@ -287,7 +279,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
 
     auto cells = tensors["cells"];
     auto obstacles = tensors["obstacles"];
-    assert(cells.dim(0) > 2);
+    assert(cells.dim(0) > 1);
     auto cellsSecondRowFromTop = cells.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
     auto obstaclesSecondRowFromTop = obstacles.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
 
@@ -317,13 +309,8 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
         graph.setCycleEstimate(v, numCellsForThisWorker);
         graph.setTileMapping(v, tile);
     }
-    return Sequence{
-            Execute(accelerateCs),
-//            PrintTensor("cellsSecondRowFromTop", cellsSecondRowFromTop),
-//            PrintTensor("obstaclesSecondRowFromTop", obstaclesSecondRowFromTop),
-//            PrintTensor("cells", cells),
-//            PrintTensor("obstacles", obstacles),
-    };
+    return Execute(accelerateCs);
+
 }
 
 
@@ -479,6 +466,7 @@ auto main(int argc, char *argv[]) -> int {
     engine.connectStream(inStreamObstacles, obstacles->getData());
     std::cerr << "Loading..." << std::endl;
 
+
     engine.load(device.value());
 
     toc = std::chrono::high_resolution_clock::now();
@@ -520,12 +508,13 @@ auto main(int argc, char *argv[]) -> int {
 //    engine.printProfileSummary(std::cout,
 //                               OptionFlags{{"showExecutionSteps", "true"}});
 
+
     std::cout << "==done==" << std::endl;
-    std::cout << "Total compute time was  " << std::right << std::setw(12) << std::setprecision(5)
+    std::cout << "Total compute time was \t" << std::right << std::setw(12) << std::setprecision(5)
               << total_compute_time
               << "s" << std::endl;
 
-    std::cout << "Reynolds number:  " << std::right << std::setw(12) << std::setprecision(5)
+    std::cout << "Reynolds number:  \t" << std::right << std::setw(12) << std::setprecision(12) << std::scientific
               << lbm::reynoldsNumber(*params, av_vels[params->maxIters - 1]) << std::endl;
 
     return EXIT_SUCCESS;

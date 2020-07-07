@@ -184,7 +184,7 @@ public:
     Input<unsigned> indexToWrite;
     Input<unsigned> myStartIndex; // The index where my array starts
     Input<unsigned> myEndIndex; // My last index
-    Output <Vector<float>> finals; // The piece of the array I have
+    InOut <Vector<float>> finals; // The piece of the array I have
 
     bool compute() {
 
@@ -241,530 +241,6 @@ public:
         }
         return true;
     }
-};
-
-/* propagate densities from neighbouring cells, following
-           ** appropriate directions of travel and writing into
-           ** scratch space grid */
-class PropagateVertex : public Vertex {
-
-public:
-    Input <Vector<float>> haloTop; // numCols x NumSpeeds
-    Input <Vector<float>> haloLeft; // numRows x NumSpeeds
-    Input <Vector<float>> haloRight; // numRows x NumSpeeds
-    Input <Vector<float>> haloBottom; // numCols x NumSpeeds
-    // We don't have vectors for these because we know exactly which speed cell we'll need:
-    Input<float> haloTopLeft;
-    Input<float> haloTopRight;
-    Input<float> haloBottomLeft;
-    Input<float> haloBottomRight;
-
-    Input <Vector<float>> in; // numCols x numRows x NumSpeeds
-    Input<unsigned> numRows; // i.e. excluding halo
-    Input<unsigned> numCols; // i.e. excluding halo
-
-    Output <Vector<float>> out; // numCols x numRows x NumSpeeds
-
-    bool compute() {
-        const auto nc = *numCols;
-        const auto nr = *numRows;
-
-
-        const auto assignToCell = [this](const size_t idx, const float2 src[5]) -> void {
-//            float2 *f2out = reinterpret_cast<float2 *>(&out[idx]);
-//            f2out[0] = src[0];
-//            f2out[1] = src[1];
-//            f2out[2] = src[2];
-//            f2out[3] = src[3];
-//            out[idx + 8] = src[4][0];
-
-            out[idx + 0] = src[0][0];
-            out[idx + 1] = src[0][1];
-            out[idx + 2] = src[1][0];
-            out[idx + 3] = src[1][1];
-            out[idx + 4] = src[2][0];
-            out[idx + 5] = src[2][1];
-            out[idx + 6] = src[3][0];
-            out[idx + 7] = src[3][1];
-            out[idx + 8] = src[4][0];
-        };
-
-        // Remember layout is (0,0) = bottom left
-
-        const int northCellOffset = +((int) nc * NumSpeeds);
-        const int southCellOffset = -((int) nc * NumSpeeds);
-        constexpr int eastCellOffset = +(int) NumSpeeds;
-        constexpr int westCellOffset = -(int) NumSpeeds;
-        constexpr int middleCellOffset = 0;
-        constexpr int sideHaloNorthCellOffset = +(int) NumSpeeds; // when we are using the left or right halo and want to know what up is
-        constexpr int sideHaloSouthCellOffset = -(int) NumSpeeds;// when we are using the left or right halo and want to know what down is
-        const int northWestCellOffset = +northCellOffset - (int) NumSpeeds;
-        const int northEastCellOffset = +northCellOffset + (int) NumSpeeds;
-        const int southEastCellOffset = +southCellOffset + (int) NumSpeeds;
-        const int southWestCellOffset = +southCellOffset - (int) NumSpeeds;
-
-        // Top left - remember layout is (0,0) is bottom left
-        const auto topLeft = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("TopLeft\n");
-#endif
-            const auto row = (nr - 1u);
-            constexpr auto col = 0u;
-            const int cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-            const auto ne = haloTop[col * NumSpeeds + eastCellOffset + SpeedIndexes::NorthEast];
-            const auto nw = *haloTopLeft;
-            const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-            const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-            const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
-            const auto sw = haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthWest];
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-        };
-
-        // Top Right
-        const auto topRight = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("TopRight\n");
-#endif
-            const auto row = (nr - 1u);
-            const auto col = (nc - 1u);
-            const int cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-            const auto ne = *haloTopRight;
-            const auto nw = haloTop[col * NumSpeeds + westCellOffset + SpeedIndexes::NorthWest];
-            const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = haloRight[row * NumSpeeds + middleCellOffset + SpeedIndexes::East];
-            const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-            const auto se = haloRight[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthEast];
-            const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-        };
-
-        // Bottom Left
-        const auto bottomLeft = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("BottomLeft\n");
-#endif
-
-
-            constexpr auto row = 0u;
-            constexpr auto col = 0u;
-            const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-            const auto ne = in[cellIdx + northEastCellOffset + SpeedIndexes::NorthEast];
-            const auto nw = haloLeft[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthWest];
-            const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-            const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-            const auto se = haloBottom[col * NumSpeeds + eastCellOffset + SpeedIndexes::SouthEast];
-            const auto sw = *haloBottomLeft;
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-        };
-
-        // Bottom right
-        const auto bottomRight = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("BottomRight\n");
-#endif
-
-            constexpr auto row = 0u;
-            const auto col = (nc - 1u);
-            const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-            const auto ne = haloRight[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthEast];
-            const auto nw = in[cellIdx + northWestCellOffset + SpeedIndexes::NorthWest];
-            const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = haloRight[row * NumSpeeds + middleCellOffset + SpeedIndexes::East];
-            const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-            const auto se = *haloBottomRight;
-            const auto sw = haloBottom[col * NumSpeeds + westCellOffset + SpeedIndexes::SouthWest];
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-        };
-
-        // Top
-        const auto top = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("Top\n");
-#endif
-
-            auto row = (nr - 1u);
-            for (size_t col = 1; col < nc - 1; col++) {
-                const int cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-                const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-                const auto ne = haloTop[col * NumSpeeds + eastCellOffset + SpeedIndexes::NorthEast];
-                const auto nw = haloTop[col * NumSpeeds + westCellOffset + SpeedIndexes::NorthWest];
-                const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
-                const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-                const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-                const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
-                const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
-
-                float2 result[5] = {{m,  e},
-                                    {n,  w},
-                                    {s,  ne},
-                                    {nw, sw},
-                                    {se, 0.0f}};
-                assignToCell(cellIdx, result);
-            }
-        };
-
-        // Bottom
-        const auto bottom = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("Bottom\n");
-#endif
-
-            auto row = 0u;
-            for (size_t col = 1; col < nc - 1; col++) {
-                const int cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-                const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-                const auto ne = in[cellIdx + northEastCellOffset + SpeedIndexes::NorthEast];
-                const auto nw = in[cellIdx + northWestCellOffset + SpeedIndexes::NorthWest];
-                const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
-                const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-                const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-                const auto se = haloBottom[col * NumSpeeds + eastCellOffset + SpeedIndexes::SouthEast];
-                const auto sw = haloBottom[col * NumSpeeds + westCellOffset + SpeedIndexes::SouthWest];
-
-                float2 result[5] = {{m,  e},
-                                    {n,  w},
-                                    {s,  ne},
-                                    {nw, sw},
-                                    {se, 0.0f}};
-                assignToCell(cellIdx, result);
-            }
-        };
-        // Left
-        const auto left = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("Left\n");
-#endif
-
-            auto col = 0u;
-            for (size_t row = 1; row < nr - 1; row++) {
-                const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-                const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-                const auto ne = in[cellIdx + northEastCellOffset + SpeedIndexes::NorthEast];
-                const auto nw = haloLeft[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthWest];
-                const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-                const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-                const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-                const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
-                const auto sw = haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthWest];
-
-                float2 result[5] = {{m,  e},
-                                    {n,  w},
-                                    {s,  ne},
-                                    {nw, sw},
-                                    {se, 0.0f}};
-                assignToCell(cellIdx, result);
-            }
-        };
-
-        // Right
-        const auto right = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("Right\n");
-#endif
-
-            auto col = nc - 1;
-            for (size_t row = 1; row < nr - 1; row++) {
-                const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-                const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-                const auto ne = haloRight[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthEast];
-                const auto nw = in[cellIdx + northWestCellOffset + SpeedIndexes::NorthWest];
-                const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
-                const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-                const auto e = haloRight[row * NumSpeeds + middleCellOffset + SpeedIndexes::East];
-                const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-                const auto se = haloRight[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthEast];
-                const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
-
-                float2 result[5] = {{m,  e},
-                                    {n,  w},
-                                    {s,  ne},
-                                    {nw, sw},
-                                    {se, 0.0f}};
-                assignToCell(cellIdx, result);
-            }
-        };
-
-        // Middle
-        const auto middle = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("Middle\n");
-#endif
-
-            for (size_t row = 1; row < nr - 1; row++) {
-                for (size_t col = 1; col < nc - 1; col++) {
-                    const int cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-
-                    const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-                    const auto ne = in[cellIdx + northEastCellOffset + SpeedIndexes::NorthEast];
-                    const auto nw = in[cellIdx + northWestCellOffset + SpeedIndexes::NorthWest];
-                    const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
-                    const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-                    const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                    const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-                    const auto se = in[cellIdx + southEastCellOffset + SpeedIndexes::SouthEast];
-                    const auto sw = in[cellIdx + southWestCellOffset + SpeedIndexes::SouthWest];
-
-                    float2 result[5] = {{m,  e},
-                                        {n,  w},
-                                        {s,  ne},
-                                        {nw, sw},
-                                        {se, 0.0f}};
-                    assignToCell(cellIdx, result);
-
-                }
-            }
-        };
-
-        const auto everythingIsABoundary = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("EverythingIsABoundary\n");
-#endif
-
-            constexpr auto row = 0u;
-            constexpr auto col = 0u;
-            const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-            const auto ne = *haloTopRight;
-            const auto nw = *haloTopLeft;
-            const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = haloRight[cellIdx + eastCellOffset + SpeedIndexes::East];
-            const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-            const auto se = *haloBottomRight;
-            const auto sw = *haloBottomLeft;
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-        };
-
-        const auto topOneCol = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("TopOneCol\n");
-#endif
-
-            const auto row = nr - 1u;
-            constexpr auto col = 0u;
-            const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-            const auto ne = *haloTopRight;
-            const auto nw = *haloTopLeft;
-            const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = haloRight[cellIdx + eastCellOffset + SpeedIndexes::East];
-            const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-            const auto sw = haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthWest];
-            const auto se = haloRight[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthEast];
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-        };
-
-        const auto middleOneCol = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("MiddleOneCol\n");
-#endif
-
-            for (auto row = 1u; row < nr; row++) {
-                constexpr auto col = 0u;
-                const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-                const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-                const auto ne = haloLeft[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthEast];
-                const auto nw = haloRight[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthWest];
-                const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-                const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-                const auto e = haloRight[cellIdx + eastCellOffset + SpeedIndexes::East];
-                const auto s = in[cellIdx + southCellOffset + SpeedIndexes::South];
-                const auto sw = haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthWest];
-                const auto se = haloRight[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::SouthEast];
-
-                float2 result[5] = {{m,  e},
-                                    {n,  w},
-                                    {s,  ne},
-                                    {nw, sw},
-                                    {se, 0.0f}};
-                assignToCell(cellIdx, result);
-            }
-        };
-
-        const auto bottomOneCol = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("BottomOneCol\n");
-#endif
-
-            constexpr auto row = 0u;
-            constexpr auto col = 0u;
-            const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = in[cellIdx + northCellOffset + SpeedIndexes::North];
-            const auto ne = haloLeft[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthEast];
-            const auto nw = haloRight[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::NorthWest];
-            const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = haloRight[cellIdx + eastCellOffset + SpeedIndexes::East];
-            const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-            const auto se = *haloBottomRight;
-            const auto sw = *haloBottomLeft;
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-
-        };
-
-        const auto leftOneRow = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("LeftOneRow\n");
-#endif
-
-            constexpr auto row = 0u;
-            constexpr auto col = 0u;
-
-            const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-            const auto ne = haloTop[col * NumSpeeds + eastCellOffset + SpeedIndexes::NorthEast];
-            const auto nw = *haloBottomLeft;;
-            const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-            const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-            const auto se = haloBottom[col * NumSpeeds + eastCellOffset + SpeedIndexes::SouthEast];
-            const auto sw = *haloBottomLeft;
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-
-        };
-
-        const auto middleOneRow = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("MiddleOneRow\n");
-#endif
-
-            constexpr auto row = 0;
-            for (auto col = 1u; col < nc; col++) {
-                const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-                const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-                const auto ne = haloTop[col * NumSpeeds + eastCellOffset + SpeedIndexes::NorthEast];
-                const auto nw = haloTop[col * NumSpeeds + westCellOffset + SpeedIndexes::NorthWest];
-                const auto w = haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
-                const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-                const auto e = in[cellIdx + eastCellOffset + SpeedIndexes::East];
-                const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-                const auto se = haloBottom[col * NumSpeeds + eastCellOffset + SpeedIndexes::SouthEast];
-                const auto sw = haloBottom[col * NumSpeeds + westCellOffset + SpeedIndexes::SouthWest];
-
-                float2 result[5] = {{m,  e},
-                                    {n,  w},
-                                    {s,  ne},
-                                    {nw, sw},
-                                    {se, 0.0f}};
-                assignToCell(cellIdx, result);
-
-            }
-        };
-
-        const auto rightOneRow = [=]() -> void {
-#ifdef DEBUG_CODELETS
-            printf("RightOneRow\n");
-#endif
-            constexpr auto row = 0;
-            const auto col = nc - 1u;
-            const auto cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
-            const auto n = haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
-            const auto ne = *haloTopRight;
-            const auto nw = haloTop[col * NumSpeeds + westCellOffset + SpeedIndexes::NorthWest];
-            const auto w = in[cellIdx + westCellOffset + SpeedIndexes::West];
-            const auto m = in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
-            const auto e = haloRight[row * NumSpeeds + middleCellOffset + SpeedIndexes::East];
-            const auto s = haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
-            const auto se = *haloBottomRight;
-            const auto sw = haloBottom[col * NumSpeeds + westCellOffset + SpeedIndexes::SouthWest];
-
-            float2 result[5] = {{m,  e},
-                                {n,  w},
-                                {s,  ne},
-                                {nw, sw},
-                                {se, 0.0f}};
-            assignToCell(cellIdx, result);
-
-        };
-
-        if (nr == 1 && nc == 1) {
-            // It's just one cell! Everything is a boundary
-            everythingIsABoundary();
-        } else if (nr > 1 && nc > 1) { // The general case
-            topLeft();
-            top();
-            topRight();
-            left();
-            right();
-            middle();
-            bottomLeft();
-            bottom();
-            bottomRight();
-        } else if (nr > 1) {// We only have one column
-            topOneCol();
-            middleOneCol();
-            bottomOneCol();
-        } else { // We only have one row
-            leftOneRow();
-            middleOneRow();
-            rightOneRow();
-        }
-        return true;
-    }
-
 };
 
 class ReboundVertex : public Vertex {
@@ -891,6 +367,147 @@ public:
                         out[idx + kk] = in[idx + kk] + omega * (d_equ[kk] - in[idx + kk]);
                     }
                 }
+            }
+        }
+        return true;
+    }
+};
+
+
+/* propagate densities from neighbouring cells, following
+           ** appropriate directions of travel and writing into
+           ** scratch space grid */
+class PropagateVertex : public Vertex {
+
+public:
+    Input <Vector<float>> haloTop; // numCols x NumSpeeds
+    Input <Vector<float>> haloLeft; // numRows x NumSpeeds
+    Input <Vector<float>> haloRight; // numRows x NumSpeeds
+    Input <Vector<float>> haloBottom; // numCols x NumSpeeds
+    // We don't have vectors for these because we know exactly which speed cell we'll need:
+    Input<float> haloTopLeft;
+    Input<float> haloTopRight;
+    Input<float> haloBottomLeft;
+    Input<float> haloBottomRight;
+
+    Input <Vector<float>> in; // numCols x numRows x NumSpeeds
+    Input<unsigned> numRows; // i.e. excluding halo
+    Input<unsigned> numCols; // i.e. excluding halo
+
+    Output <Vector<float>> out; // numCols x numRows x NumSpeeds
+
+    bool compute() {
+        const auto nc = *numCols;
+        const auto nr = *numRows;
+
+        // Remember layout is (0,0) = bottom left
+        const auto TOP = nr - 1;
+        constexpr auto BOTTOM = 0ul;
+        constexpr auto LEFT = 0ul;
+        const auto RIGHT = nc - 1;
+        const int northCellOffset = +((int) nc * NumSpeeds);
+        const int southCellOffset = -((int) nc * NumSpeeds);
+        constexpr int eastCellOffset = +(int) NumSpeeds;
+        constexpr int westCellOffset = -(int) NumSpeeds;
+        constexpr int middleCellOffset = 0;
+        constexpr int sideHaloNorthCellOffset = +(int) NumSpeeds; // when we are using the left or right halo and want to know what up is
+        constexpr int sideHaloSouthCellOffset = -(int) NumSpeeds;// when we are using the left or right halo and want to know what down is
+        const int northWestCellOffset = +northCellOffset + westCellOffset;
+        const int northEastCellOffset = +northCellOffset + eastCellOffset;
+        const int southEastCellOffset = +southCellOffset + eastCellOffset;
+        const int southWestCellOffset = +southCellOffset + westCellOffset;
+
+
+        for (auto row = BOTTOM; row <= TOP; row++) {
+            for (auto col = LEFT; col <= RIGHT; col++) {
+                const int cellIdx = row * (nc * NumSpeeds) + col * NumSpeeds;
+                // For each one we take the mirrored direction (so from the northCellSouthSpeed cell, we want the southCellNorthSpeed direction)
+                const auto northCellSouthSpeed = [=]() -> float {
+                    if (row == TOP) {
+                        return haloTop[col * NumSpeeds + middleCellOffset + SpeedIndexes::South];
+                    }
+                    return in[cellIdx + northCellOffset + SpeedIndexes::South];
+                };
+
+                const auto northEastCellSouthWestSpeed = [=]() -> float {
+                    if (row == TOP && col == RIGHT) {
+                        return *haloTopRight;
+                    } else if (row == TOP) {
+                        return haloTop[col * NumSpeeds + eastCellOffset + SpeedIndexes::SouthWest];
+                    } else if (col == RIGHT) {
+                        return haloRight[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::SouthWest];
+                    }
+                    return in[cellIdx + northEastCellOffset + SpeedIndexes::SouthWest];
+                };
+
+                const auto northWestCellSouthEastSpeed = [=]() -> float {
+                    if (row == TOP && col == LEFT) {
+                        return *haloTopLeft;
+                    } else if (row == TOP) {
+                        return haloTop[col * NumSpeeds + westCellOffset + SpeedIndexes::SouthEast];
+                    } else if (col == LEFT) {
+                        return haloLeft[row * NumSpeeds + sideHaloNorthCellOffset + SpeedIndexes::SouthEast];
+                    }
+                    return in[cellIdx + northWestCellOffset + SpeedIndexes::SouthEast];
+                };
+
+                const auto westCellEastSpeed = [=]() -> float {
+                    if (col == LEFT) {
+                        return haloLeft[row * NumSpeeds + middleCellOffset + SpeedIndexes::East];
+                    }
+                    return in[cellIdx + westCellOffset + SpeedIndexes::East];
+                };
+
+                const auto middle = [=]() -> float {
+                    return in[cellIdx + middleCellOffset + SpeedIndexes::Middle];
+                };
+
+                const auto eastCellWestSpeed = [=]() -> float {
+                    if (col == RIGHT) {
+                        return haloRight[row * NumSpeeds + middleCellOffset + SpeedIndexes::West];
+                    }
+                    return in[cellIdx + eastCellOffset + SpeedIndexes::West];
+                };
+
+                const auto southCellNorthSpeed = [=]() -> float {
+                    if (row == BOTTOM) {
+                        return haloBottom[col * NumSpeeds + middleCellOffset + SpeedIndexes::North];
+                    }
+                    return in[cellIdx + southCellOffset + SpeedIndexes::North];
+                };
+
+                const auto southEastCellNorthWestSpeed = [=]() -> float {
+                    if (row == BOTTOM && col == RIGHT) {
+                        return *haloBottomRight;
+                    } else if (row == BOTTOM) {
+                        return haloBottom[col * NumSpeeds + eastCellOffset + SpeedIndexes::NorthWest];
+                    } else if (col == RIGHT) {
+                        return haloRight[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::NorthWest];
+                    }
+                    return in[cellIdx + southEastCellOffset + SpeedIndexes::NorthWest];
+                };
+
+
+                const auto southWestCellNorthEastSpeed = [=]() -> float {
+                    if (row == BOTTOM && col == LEFT) {
+                        return *haloBottomLeft;
+                    } else if (row == BOTTOM) {
+                        return haloBottom[col * NumSpeeds + westCellOffset + SpeedIndexes::NorthEast];
+                    } else if (col == LEFT) {
+                        return haloLeft[row * NumSpeeds + sideHaloSouthCellOffset + SpeedIndexes::NorthEast];
+                    }
+                    return in[cellIdx + southWestCellOffset + SpeedIndexes::NorthEast];
+                };
+                // Now we copy the mirrored directions (South <-> North) etc.
+                out[cellIdx + SpeedIndexes::Middle] = middle();
+                out[cellIdx + SpeedIndexes::East] = westCellEastSpeed();
+                out[cellIdx + SpeedIndexes::West] = eastCellWestSpeed();
+                out[cellIdx + SpeedIndexes::South] = northCellSouthSpeed();
+                out[cellIdx + SpeedIndexes::North] = southCellNorthSpeed();
+                out[cellIdx + SpeedIndexes::NorthWest] = southEastCellNorthWestSpeed();
+                out[cellIdx + SpeedIndexes::NorthEast] = southWestCellNorthEastSpeed();
+                out[cellIdx + SpeedIndexes::SouthWest] = northEastCellSouthWestSpeed();
+                out[cellIdx + SpeedIndexes::SouthEast] = northWestCellSouthEastSpeed();
             }
         }
         return true;
