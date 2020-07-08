@@ -504,7 +504,7 @@ auto main(int argc, char *argv[]) -> int {
         std::cerr << "took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
     }
 
-    lbm::captureProfileInfo(engine);
+    lbm::captureProfileInfo(engine, graph);
 
     engine.printProfileSummary(std::cout,
                                OptionFlags{{"showExecutionSteps", "false"}});

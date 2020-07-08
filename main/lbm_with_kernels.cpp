@@ -362,8 +362,8 @@ auto main(int argc, char *argv[]) -> int {
     cells.initialise(*params);
 
 
-    auto device = lbm::getIpuModel();
-//    auto device = lbm::getIpuDevice();
+    // auto device = lbm::getIpuModel();
+    auto device = lbm::getIpuDevice();
     if (!device.has_value()) {
         return EXIT_FAILURE;
     }
@@ -503,7 +503,7 @@ auto main(int argc, char *argv[]) -> int {
     lbm::writeAverageVelocities("av_vels.dat", av_vels);
     lbm::writeResults("final_state.dat", *params, *obstacles, cells);
 
-//    lbm::captureProfileInfo(engine);
+   lbm::captureProfileInfo(engine, graph);
 //
 //    engine.printProfileSummary(std::cout,
 //                               OptionFlags{{"showExecutionSteps", "true"}});

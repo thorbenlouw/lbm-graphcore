@@ -39,7 +39,7 @@ namespace lbm {
         return {ipuModel.createDevice()};
     }
 
-    auto captureProfileInfo(Engine &engine) {
+    auto captureProfileInfo(Engine &engine, Graph &graph) {
         std::ofstream graphOfs;
         graphOfs.open("graph.json", std::ofstream::out | std::ofstream::trunc);
 
@@ -48,9 +48,16 @@ namespace lbm {
 
         serializeToJSON(graphOfs, engine.getGraphProfile(), false);
         serializeToJSON(executionOfs, engine.getExecutionProfile(), false);
-
+        
         graphOfs.close();
         executionOfs.close();
+
+
+        std::ofstream graphSerOfs;
+        graphSerOfs.open("serialized_graph.capnp", std::ofstream::out | std::ofstream::trunc);
+
+        graph.serialize(graphSerOfs, poplar::SerializationFormat::Binary);
+        graphSerOfs.close();
     }
 
     auto getIpuDevice(unsigned int numIpus = 1) -> std::optional<Device> {
