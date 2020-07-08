@@ -15,163 +15,6 @@ enum SpeedIndexes {
     Middle, East, North, West, South, NorthEast, NorthWest, SouthWest, SouthEast
 };
 
-//#define DEBUG_CODELETS 0
-
-/**
- * Convert the 9 directional speed distributions to a normed velocity
- */
-class NormedVelocityVertex : public Vertex {
-public:
-    Input <Vector<float>> cells; // 9 speeds in every cell
-    Output <Vector<float>> vels; // 1 velocity for every cell
-    Input<unsigned> numCells;
-
-    bool compute() {
-        for (auto i = 0; i < *numCells; i++) {
-            auto idx = i * NumSpeeds;
-            const auto c0 = cells[idx + 0];
-            const auto c1 = cells[idx + 1];
-            const auto c2 = cells[idx + 2];
-            const auto c3 = cells[idx + 3];
-            const auto c4 = cells[idx + 4];
-            const auto c5 = cells[idx + 5];
-            const auto c6 = cells[idx + 6];
-            const auto c7 = cells[idx + 7];
-            const auto c8 = cells[idx + 8];
-
-
-            auto local_density = (c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8);
-
-            auto u_x = (c1 + c5 + c8 - c3 - c6 - c7) / local_density;
-            auto u_y = (c2 + c5 + c6 - c4 - c7 - c8) / local_density;
-            vels[i] = sqrtf((u_x * u_x) + (u_y * u_y));
-        }
-        return true;
-    }
-};
-
-
-class NormedVelocityVertexOptim : public Vertex {
-public:
-    Input <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> cells; // 9 speeds in every cell
-    Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> vels; // 1 velocity for every cell
-    Input<unsigned> numCells;
-
-    bool compute() {
-        const uint16_t n = (uint16_t) * numCells;
-
-        for (auto i = 0; i < n; i++) {
-            auto cellAddress = reinterpret_cast<float2 *>(&cells[i * NumSpeeds]);
-
-            auto c01 = *cellAddress;
-            auto c23 = *(cellAddress + 1);
-            auto c45 = *(cellAddress + 2);
-            auto c67 = *(cellAddress + 3);
-            auto c8X = *(cellAddress + 4);
-
-            auto local_density_partial = c01 + c23 + c45 + c67 + float2{c8X[0], 0};
-            auto local_density = local_density_partial[0] + local_density_partial[1];
-
-            auto u_x = (c01[1] + c45[1] + c8X[0] - c23[1] - c67[0] - c67[1]) / local_density;
-            auto u_y = (c23[0] + c45[1] + c67[0] - c45[0] - c67[1] - c8X[0]) / local_density;
-            vels[i] = sqrtf((u_x * u_x) + (u_y * u_y));
-        }
-        return true;
-    }
-};
-
-/**
- * For each velocity, if it is not masked, count it and add its velocity to the total
- */
-class MaskedSumPartial : public Vertex { // On each worker, reduce the cells
-
-public:
-    Input <Vector<float>> velocities;
-    Input <Vector<bool>> obstacles;
-    Input<unsigned> numCells;
-    Output <Vector<float>> totalAndCount;
-
-    bool compute() {
-        const uint16_t n = (uint16_t) * numCells;
-
-        auto count = 0.0f;
-        auto tmp = 0.0f;
-        for (auto i = 0; i < n; i++) {
-            tmp += velocities[i] * (1 - obstacles[i]); // only if not obstacle
-            count += (1 - obstacles[i]); // only if not obstacle
-        }
-        totalAndCount[0] = tmp;
-        totalAndCount[1] = count;
-
-        return true;
-    }
-};
-
-class MaskedSumPartialOptim : public Vertex { // On each worker, reduce the cells
-
-public:
-    Input <Vector<float, VectorLayout::ONE_PTR, 4, false>> velocities;
-    Input <Vector<bool, VectorLayout::ONE_PTR, 4, false>> obstacles;
-    Input<unsigned> numCells;
-    Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> totalAndCount;
-
-    bool compute() {
-        const uint16_t n = (uint16_t) * numCells;
-
-        auto count = 0.0f;
-        auto tmp = 0.0f;
-        for (auto i = 0; i < n; i++) {
-            tmp += velocities[i] * (1 - obstacles[i]); // only if not obstacle
-            count += (1 - obstacles[i]); // only if not obstacle
-        }
-        float2 *f2out = reinterpret_cast<float2 *>(&totalAndCount[0]);
-        f2out[0] = {tmp, count};
-        return true;
-    }
-};
-
-
-/**
- * Take a partial list of velocities and their counts and return one total velocity and total count
- */
-class ReducePartials : public Vertex { // Take the partials within a tile and reduce them
-public:
-    Input <Vector<float>> totalAndCountPartials;
-    Input<unsigned> numPartials;
-    Output <Vector<float>> totalAndCount;
-
-    bool compute() {
-        float tmp = 0.f;
-        float count = 0.f;
-
-        for (int i = 0; i < *numPartials; i++) {
-            tmp += totalAndCountPartials[i * 2];
-            count += totalAndCountPartials[i * 2 + 1];
-        }
-        totalAndCount[0] = tmp;
-        totalAndCount[1] = count;
-        return true;
-    }
-};
-
-class ReducePartialsOptim : public Vertex { // Take the partials within a tile and reduce them
-public:
-    Input <Vector<float, VectorLayout::SCALED_PTR32, 4>> totalAndCountPartials;
-    Input<unsigned> numPartials;
-    Output <Vector<float, VectorLayout::SCALED_PTR32, 4, false>> totalAndCount;
-
-    bool compute() {
-        float2 tmp = {0.0f, 0.0f};
-
-        for (int i = 0; i < *numPartials; i++) {
-            tmp += *reinterpret_cast<float2 *>(&totalAndCountPartials[i * 2]);
-        }
-        float2 *f2out = reinterpret_cast<float2 *>(&totalAndCount[0]);
-        f2out[0] = tmp;
-        return true;
-    }
-};
-
 /**
  *  The output array of average velocities is spread throughout the distributed memories. We give each
  *  tile a vertex that knows what bits of the array are mapped to it. The totalAndCount is broadcast to
@@ -180,7 +23,8 @@ public:
 class AppendReducedSum : public Vertex { // Reduce the per-tile partial sums and append to the average list
 
 public:
-    Input <Vector<float>> totalAndCount; // float2 of total|count
+    Input<float> total; // float2 of total|count
+    Input<int> count; // float2 of total|count
     Input<unsigned> indexToWrite;
     Input<unsigned> myStartIndex; // The index where my array starts
     Input<unsigned> myEndIndex; // My last index
@@ -190,9 +34,7 @@ public:
 
         const auto idx = *indexToWrite;
         if ((idx >= *myStartIndex) && (idx <= *myEndIndex)) {
-            auto total = totalAndCount[0];
-            auto count = totalAndCount[1];
-            finals[idx - *myStartIndex] = total / count;
+            finals[idx - *myStartIndex] = *total / *count;
         }
         return true;
     }
@@ -243,45 +85,7 @@ public:
     }
 };
 
-class ReboundVertex : public Vertex {
-
-public:
-    Input <Vector<float>> in; // 9 speeds in every cell, no halo
-    Output <Vector<float>> out; // 9 speeds in every cell, no halo
-    Input <Vector<bool>> obstacles; //  no halo
-    Input<unsigned> numRows; // no halo
-    Input<unsigned> numCols; // no halo
-
-    bool compute() {
-        size_t cols = *numCols;
-        size_t rows = *numRows;
-
-        /* loop over the cells in the grid */
-        for (size_t jj = 0; jj < rows; jj++) {
-#pragma unroll 4
-            for (size_t ii = 0; ii < cols; ii++) {
-                auto obstacleIdx = jj * cols + ii;
-                auto cellIdx = jj * (cols * NumSpeeds) + (ii * NumSpeeds);
-                /* if the cell contains an obstacle */
-                if (obstacles[obstacleIdx]) {
-                    /* called after propagate, so taking values from scratch space
-                    ** mirroring, and writing into main grid */
-                    out[cellIdx + 1] = in[cellIdx + 3];
-                    out[cellIdx + 2] = in[cellIdx + 4];
-                    out[cellIdx + 3] = in[cellIdx + 1];
-                    out[cellIdx + 4] = in[cellIdx + 2];
-                    out[cellIdx + 5] = in[cellIdx + 7];
-                    out[cellIdx + 6] = in[cellIdx + 8];
-                    out[cellIdx + 7] = in[cellIdx + 5];
-                    out[cellIdx + 8] = in[cellIdx + 6];
-                }
-            }
-        }
-        return true;
-    }
-};
-
-
+// TODO: Idea change cells to SOA so that we can do everything vectorised (in 2s)
 class CollisionVertex : public Vertex {
 
 public:
@@ -291,9 +95,16 @@ public:
     Input<unsigned> numCols; // no halo
     Input<float> omega;
     Output <Vector<float>> out;
+    Output<float> normedVelocityPartial; // sum of normed velocities for non-obstacle cells
+    Output<int> countPartial; // count of how many non-obstacle cells there are
+
 
     bool compute() {
+        auto tmp_count = 0u;
+        auto tmp_velocityPartial = 0.f;
+
         const auto c_sq = 1.f / 3.f; /* square of speed of sound */
+        const auto cc2 = (2.f * c_sq * c_sq);
         const auto w0 = 4.f / 9.f;  /* weighting factor */
         const auto w1 = 1.f / 9.f;  /* weighting factor */
         const auto w2 = 1.f / 36.f; /* weighting factor */
@@ -302,30 +113,44 @@ public:
         ** NB the collision step is called after
         ** the propagate step and so values of interest
         ** are in the scratch-space grid */
-        for (int jj = 0; jj < *numRows; jj++) {
-            for (int ii = 0; ii < *numCols; ii++) {
-                const auto obstacleIdx = ii + jj * *numCols;
-                const auto idx = obstacleIdx * NumSpeeds;
-                /* don't consider occupied cells */
-                // TODO can just fold rebound in here.
-                if (!obstacles[obstacleIdx]) {
+        const auto nr = *numRows;
+        const auto nc = *numCols;
+        const auto o = *omega;
+
+        for (int jj = 0; jj < nr; jj++) {
+            for (int ii = 0; ii < nc; ii++) {
+                const auto idx = ii + jj * *numCols;
+                const auto cellsIdx = idx * NumSpeeds;
+                const auto rebound = obstacles[idx];
+                if (rebound) {
+                    out[cellsIdx + 1] = in[cellsIdx + 3];
+                    out[cellsIdx + 2] = in[cellsIdx + 4];
+                    out[cellsIdx + 3] = in[cellsIdx + 1];
+                    out[cellsIdx + 4] = in[cellsIdx + 2];
+                    out[cellsIdx + 5] = in[cellsIdx + 7];
+                    out[cellsIdx + 6] = in[cellsIdx + 8];
+                    out[cellsIdx + 7] = in[cellsIdx + 5];
+                    out[cellsIdx + 8] = in[cellsIdx + 6];
+                } else {
                     /* compute local density total */
                     auto local_density = 0.f;
 
                     for (int kk = 0; kk < NumSpeeds; kk++) {
-                        local_density += in[idx + kk];
+                        local_density += in[cellsIdx + kk];
                     }
 
                     /* compute x velocity component */
-                    const auto u_x = ((in[idx + 1] + in[idx + 5] + in[idx + 8])
-                                      - (in[idx + 3] + in[idx + 6] + in[idx + 7]))
+                    const auto u_x = ((in[cellsIdx + 1] + in[cellsIdx + 5] + in[cellsIdx + 8])
+                                      - (in[cellsIdx + 3] + in[cellsIdx + 6] + in[cellsIdx + 7]))
                                      / local_density;
                     /* compute y velocity component */
-                    const auto u_y = ((in[idx + 2] + in[idx + 5] + in[idx + 6])
-                                      - (in[idx + 4] + in[idx + 7] + in[idx + 8])) / local_density;
+                    const auto u_y = ((in[cellsIdx + 2] + in[cellsIdx + 5] + in[cellsIdx + 6])
+                                      - (in[cellsIdx + 4] + in[cellsIdx + 7] + in[cellsIdx + 8])) / local_density;
 
                     /* velocity squared */
                     const auto u_sq = u_x * u_x + u_y * u_y;
+                    tmp_velocityPartial += sqrtf(u_sq);
+                    tmp_count++;
 
                     /* directional velocity components */
                     const float u[NumSpeeds] = {
@@ -342,8 +167,6 @@ public:
 
 
                     const auto u_over_2csq = u_sq / (2.f * c_sq);
-                    const auto cc2 = (2.f * c_sq * c_sq);
-
 
                     // TODO! This is nicely vectorisable
                     /* equilibrium densities */
@@ -364,11 +187,13 @@ public:
                     /* relaxation step */
                     //TODO can float2 this
                     for (int kk = 0; kk < NumSpeeds; kk++) {
-                        out[idx + kk] = in[idx + kk] + omega * (d_equ[kk] - in[idx + kk]);
+                        out[cellsIdx + kk] = in[cellsIdx + kk] + o * (d_equ[kk] - in[cellsIdx + kk]);
                     }
                 }
             }
         }
+        *countPartial = tmp_count;
+        *normedVelocityPartial = tmp_velocityPartial;
         return true;
     }
 };
