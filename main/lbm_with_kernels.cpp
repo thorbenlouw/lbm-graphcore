@@ -109,7 +109,8 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
 }
 
 auto
-collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, const  grids::GridPartitioning &mappings) -> Program {
+collision(Graph &graph, const lbm::Params &params, TensorMap &tensors,
+          const grids::GridPartitioning &mappings) -> Program {
     const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
     const auto numWorkersPerTile = graph.getTarget().getNumWorkerContexts();
 
@@ -248,7 +249,7 @@ auto mapCellsToTiles(Graph &graph, Tensor &cells, const grids::GridPartitioning 
         const auto tile = target.ipu() * numTilesPerIpu + target.tile();
 
         if (print) {
-            std::cout << "tile: " << tile << " target: " << target.ipu() << ":" << target.tile() << ":"
+            std::cout << "tile: " << tile << " ipu: " << target.ipu() << ":" << target.tile() << ":"
                       << target.worker() <<
                       "(r: " << slice.rows().from() << ",c: " << slice.cols().from() << ",w: " << slice.width() <<
                       ",h: " << slice.height() << std::endl;
@@ -275,7 +276,7 @@ auto main(int argc, char *argv[]) -> int {
         if (addToComputeTime) total_compute_time += diff;
     };
 
-    if (argc != 3) {
+    if (argc < 3) {
         std::cerr << "Expected usage: " << argv[0] << " <params_file> <obstacles_file> <num_ipus::=0>" << std::endl;
         return EXIT_FAILURE;
     }
@@ -296,8 +297,9 @@ auto main(int argc, char *argv[]) -> int {
     cells.initialise(*params);
 
 
-    auto device = lbm::getIpuModel();
-//    auto device = lbm::getIpuDevice( argc == 4 ? atoi(argv[3]) : 1);
+    auto numIPus = argc == 4 ? atoi(argv[3]) : 1;
+    auto device = lbm::getIpuModel(numIPus);
+//    auto device = lbm::getIpuDevice(numIPus );
     if (!device.has_value()) {
         return EXIT_FAILURE;
     }
@@ -307,10 +309,10 @@ auto main(int argc, char *argv[]) -> int {
     auto numWorkers = device->getTarget().getNumWorkerContexts();
     auto numIpus = device->getTarget().getNumIPUs();
 
-
     const auto ipuLevelMapping = grids::partitionForIpus({params->ny, params->nx}, numIpus, 2000 * 1000);
     if (!ipuLevelMapping.has_value()) {
-        std::cerr << "Couldn't find a way to partition the input parameter space over the given number of IPUs";
+        std::cerr << "Couldn't find a way to partition the input parameter space over the given number of IPUs"
+                  << std::endl;
         return EXIT_FAILURE;
     }
     const auto tileGranularityMappings = grids::toTilePartitions(*ipuLevelMapping,
@@ -322,6 +324,8 @@ auto main(int argc, char *argv[]) -> int {
             tileGranularityMappings,
             numWorkers
     );
+
+    grids::serializeToJson(workerGranularityMappings, "/tmp/partitioning.json");
 
     auto tensors = std::map<std::string, Tensor>{};
 

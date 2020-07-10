@@ -16,6 +16,7 @@
 #include <map>
 #include <cmath>
 #include <functional>
+#include <fstream>
 
 
 using namespace std;
@@ -114,6 +115,31 @@ namespace grids {
 
 
     typedef std::map<PartitioningTarget, Slice2D, PartitionTargetComparator> GridPartitioning;
+
+    auto serializeToJson(const GridPartitioning &partitioning, const std::string &filename) {
+        ofstream file;
+        file.open(filename);
+        file << R"EOS({"GridPartitioning" : [)EOS" << std::endl;
+        bool comma = false;
+        for (const auto&[target, slice]: partitioning) {
+            if (comma) {
+                file << "," << std::endl;
+            }
+            file << "  {" << std::endl;
+            file << R"'(    "ipu":)'" << target.ipu() << "," << std::endl;
+            file << R"'(    "tile":)'" << target.tile() << "," << std::endl;
+            file << R"'(    "worker":)'" << target.worker() << "," << std::endl;
+            file << R"'(    "slice": {)'" << std::endl;
+            file << R"'(       "rows" : { "from" : )'" << slice.rows().from() << "," <<
+                 R"'("to" : )'" << slice.rows().to() << "}," << std::endl;
+            file << R"'(       "cols" : { "from" : )'" << slice.cols().from() << "," <<
+                 R"'("to" : )'" << slice.cols().to() << "}" << std::endl;
+            file << "  }";
+            comma = true;
+        }
+        file << std::endl << "]}" << std::endl;
+        file.close();
+    }
 
     /**
      * A problem size so small we just use one tile
@@ -451,9 +477,19 @@ namespace grids {
         float colImbalance = (float) (size.cols() % numIpus) / (float) size.cols();
 
         if (rowImbalance < colImbalance) {
-            return {shortAndWideIpuStrategy(size, numIpus, maxCellsPerIpu)};
+            if (auto result = longAndNarrowIpuStrategy(size, numIpus, maxCellsPerIpu); result.has_value()) {
+                return result;
+            } else {
+                // Couldn't partition. Try cols?
+                return shortAndWideIpuStrategy(size, numIpus, maxCellsPerIpu);
+            }
         } else {
-            return {longAndNarrowIpuStrategy(size, numIpus, maxCellsPerIpu)};
+            if (auto result = shortAndWideIpuStrategy(size, numIpus, maxCellsPerIpu); result.has_value()) {
+                return result;
+            } else {
+                // Couldn't partition. Try rows?
+                return longAndNarrowIpuStrategy(size, numIpus, maxCellsPerIpu);
+            }
         }
     }
 

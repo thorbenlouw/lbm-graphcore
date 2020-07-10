@@ -32,9 +32,9 @@ namespace lbm {
 
     const auto POPLAR_ENGINE_OPTIONS_NODEBUG = OptionFlags{};
 
-    auto getIpuModel() -> std::optional<Device> {
+    auto getIpuModel(const unsigned short numIpus=1) -> std::optional<Device> {
         IPUModel ipuModel;
-        ipuModel.numIPUs = 1;
+        ipuModel.numIPUs = numIpus;
         ipuModel.tilesPerIPU = 1216;
         return {ipuModel.createDevice()};
     }
