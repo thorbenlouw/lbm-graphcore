@@ -2,7 +2,6 @@
 
 #include <cstdlib>
 #include <poplar/IPUModel.hpp>
-#include <popops/ElementWise.hpp>
 #include <popops/Reduce.hpp>
 #include <popops/codelets.hpp>
 #include <iomanip>
@@ -35,7 +34,7 @@ auto applySlice(Tensor &tensor, grids::Slice2D slice) -> Tensor {
 
 auto
 averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
-                grids::TileMappings &workerLevelMappings) -> Program {
+                const grids::GridPartitioning &workerLevelMappings) -> Program {
 
     // As part of collision we already calculated a partialSum (float) and partialCount (unsigned) for each worker
     // which represents the summed normedVelocity and count of cells which are not masked by obstacles. Now we reduce them
@@ -55,9 +54,11 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
     const auto numIpus = graph.getTarget().getNumIPUs();
     const auto numTilesPerIpu = graph.getTarget().getNumTiles() / numIpus;
 
-    auto avVelsTileMapping = grids::partitionGridToTilesForSingleIpu(
-            {params.maxIters, 1},
-            numTilesPerIpu * numIpus
+    auto ipuPartitioning = grids::partitionForIpus({params.maxIters, 1}, numIpus, params.maxIters);
+    assert(ipuPartitioning.has_value());
+    auto avVelsTileMapping = grids::toTilePartitions(
+            *ipuPartitioning,
+            graph.getTarget().getNumIPUs()
     );
 
     ComputeSet appendResultCs = graph.addComputeSet("appendReducedSum");
@@ -108,7 +109,7 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
 }
 
 auto
-collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
+collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, const  grids::GridPartitioning &mappings) -> Program {
     const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
     const auto numWorkersPerTile = graph.getTarget().getNumWorkerContexts();
 
@@ -145,7 +146,7 @@ collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::Ti
 
 auto propagate(Graph &graph,
                const lbm::Params &params, TensorMap &tensors,
-               grids::TileMappings &mappings) -> Program {
+               const grids::GridPartitioning &mappings) -> Program {
     const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
 
     ComputeSet propagateCs = graph.addComputeSet("propagate");
@@ -199,11 +200,15 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
 
     // For now, let's try the approach of spreading accelerate computation over more tiles, even if that
     // means redistributing data from cells and obstacles (i.e. keep tiles busy rather than minimise data transfer)
-    auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
-            {1, params.nx},
+    // TODO actually just run on the tiles where this stuff is mapped
+    const auto ipuLevelMapping = grids::partitionForIpus({1, params.nx}, graph.getTarget().getNumIPUs(), params.nx);
+
+    assert(ipuLevelMapping.has_value());
+    auto tileGranularityMappings = grids::toTilePartitions(
+            *ipuLevelMapping,
             numTilesPerIpu
     );
-    auto workerGranularityMappings = grids::toWorkerMappings(
+    auto workerGranularityMappings = grids::toWorkerPartitions(
             tileGranularityMappings,
             numWorkers
     );
@@ -228,7 +233,8 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
 
 
 auto
-timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
+timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors,
+         const grids::GridPartitioning &mappings) -> Program {
     return Sequence{
             accelerate_flow(graph, params, tensors),
             propagate(graph, params, tensors, mappings),
@@ -236,7 +242,7 @@ timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::Til
     };
 }
 
-auto mapCellsToTiles(Graph &graph, Tensor &cells, grids::TileMappings &tileMappings, bool print = false) {
+auto mapCellsToTiles(Graph &graph, Tensor &cells, const grids::GridPartitioning &tileMappings, bool print = false) {
     const auto numTilesPerIpu = graph.getTarget().getNumTiles();
     for (const auto&[target, slice]: tileMappings) {
         const auto tile = target.ipu() * numTilesPerIpu + target.tile();
@@ -270,9 +276,11 @@ auto main(int argc, char *argv[]) -> int {
     };
 
     if (argc != 3) {
-        std::cerr << "Expected usage: " << argv[0] << " <params_file> <obstacles_file>" << std::endl;
+        std::cerr << "Expected usage: " << argv[0] << " <params_file> <obstacles_file> <num_ipus::=0>" << std::endl;
         return EXIT_FAILURE;
     }
+
+
     auto params = lbm::Params::fromFile(argv[1]);
     if (!params.has_value()) {
         std::cerr << "Could not parse parameters file. Aborting" << std::endl;
@@ -289,7 +297,7 @@ auto main(int argc, char *argv[]) -> int {
 
 
     auto device = lbm::getIpuModel();
-//    auto device = lbm::getIpuDevice();
+//    auto device = lbm::getIpuDevice( argc == 4 ? atoi(argv[3]) : 1);
     if (!device.has_value()) {
         return EXIT_FAILURE;
     }
@@ -299,11 +307,18 @@ auto main(int argc, char *argv[]) -> int {
     auto numWorkers = device->getTarget().getNumWorkerContexts();
     auto numIpus = device->getTarget().getNumIPUs();
 
-    auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
-            {params->ny, params->nx},
-            numTilesPerIpu
+
+    const auto ipuLevelMapping = grids::partitionForIpus({params->ny, params->nx}, numIpus, 2000 * 1000);
+    if (!ipuLevelMapping.has_value()) {
+        std::cerr << "Couldn't find a way to partition the input parameter space over the given number of IPUs";
+        return EXIT_FAILURE;
+    }
+    const auto tileGranularityMappings = grids::toTilePartitions(*ipuLevelMapping,
+                                                                 numTilesPerIpu,
+                                                                 6,
+                                                                 6
     );
-    auto workerGranularityMappings = grids::toWorkerMappings(
+    const auto workerGranularityMappings = grids::toWorkerPartitions(
             tileGranularityMappings,
             numWorkers
     );
