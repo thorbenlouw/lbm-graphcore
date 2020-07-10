@@ -15,11 +15,15 @@ add_executable(lbm
         )
 
 
+add_executable(stencil
+        stencil.cpp
+        ${Main_SRCS}
+        )
+
 add_executable(lbm_with_kernels
         lbm_with_kernels.cpp
         ${Main_SRCS}
         )
-
 
 # Specify here the libraries this program depends on
 target_link_libraries(lbm
@@ -32,6 +36,11 @@ target_link_libraries(lbm_with_kernels
         poplar
         poputil
         poplin
+        )
+
+target_link_libraries(stencil
+        poplar
+        poputil
         )
 
 install(TARGETS lbm DESTINATION bin)

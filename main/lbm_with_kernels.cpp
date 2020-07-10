@@ -63,7 +63,7 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
 
     ComputeSet appendResultCs = graph.addComputeSet("appendReducedSum");
     for (const auto &[target, slice] : avVelsTileMapping) {
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
+        auto tile = target.virtualTile(numTilesPerIpu);
 
         auto appendReducedSumVertex = graph.addVertex(
                 appendResultCs,
@@ -117,7 +117,7 @@ collision(Graph &graph, const lbm::Params &params, TensorMap &tensors,
     ComputeSet collisionCs = graph.addComputeSet("collision");
 
     for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
+        auto tile = target.virtualTile(numTilesPerIpu);
         auto numCellsForThisWorker = slice.width() * slice.height();
 
         auto v = graph.addVertex(collisionCs,
@@ -155,7 +155,7 @@ auto propagate(Graph &graph,
 
     auto fullSize = grids::Size2D(params.ny, params.nx);
     for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
+        auto tile = target.virtualTile(numTilesPerIpu);
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto halos = grids::Halos::forSlice(slice, fullSize);
         auto v = graph.addVertex(propagateCs,
@@ -216,7 +216,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
 
     for (const auto &[target, slice] : workerGranularityMappings) {
 
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
+        auto tile = target.virtualTile(numTilesPerIpu);
 
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto v = graph.addVertex(accelerateCs,
@@ -244,9 +244,9 @@ timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors,
 }
 
 auto mapCellsToTiles(Graph &graph, Tensor &cells, const grids::GridPartitioning &tileMappings, bool print = false) {
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles();
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
     for (const auto&[target, slice]: tileMappings) {
-        const auto tile = target.ipu() * numTilesPerIpu + target.tile();
+        const auto tile = target.virtualTile(numTilesPerIpu);
 
         if (print) {
             std::cout << "tile: " << tile << " ipu: " << target.ipu() << ":" << target.tile() << ":"
@@ -375,7 +375,7 @@ auto main(int argc, char *argv[]) -> int {
     std::unique_ptr<Engine> engine;
     auto av_vels = std::vector<float>(params->maxIters, 0.0f);
 
-    timedStep("Creating engine and loading computational graph", [&]() {
+    timedStep("Creating engine", [&]() {
 
         auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
         auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
@@ -396,16 +396,29 @@ auto main(int argc, char *argv[]) -> int {
                 averageVelocity(graph, *params, tensors, workerGranularityMappings)
         });
 
+
         engine = std::unique_ptr<Engine>(
                 new Engine(graph, {copyCellsAndObstaclesToDevice, prog, streamBackToHostProg},
-                           lbm::POPLAR_ENGINE_OPTIONS_DEBUG));
+                           lbm::POPLAR_ENGINE_OPTIONS_DEBUG,
+                           [](int a, int b) -> void { std::cerr << a << "/" << b << std::endl; }));
+
         engine->connectStream(outStreamAveVelocities, av_vels.data());
         engine->connectStream(outStreamFinalCells, cells.getData());
         engine->connectStream(inStreamCells, cells.getData());
         engine->connectStream(inStreamObstacles, obstacles->getData());
 
         engine->load(device.value());
+
+
     });
+//
+//    timedStep("Compiling graph", [&]() {
+//auto exe = poplar::compileGraph(graph, ArrayRef{copyCellsAndObstaclesToDevice, prog, streamBackToHostProg},
+//                                POPLAR_ENGINE_OPTIONS_DEBUG,
+//                                [](int a, int b) -> void { std::cerr << a << "/" << b << std::endl; });
+//engine->load(device.value());
+//
+//    });
 
     timedStep("Running copy to device step", [&]() {
         engine->run(0);

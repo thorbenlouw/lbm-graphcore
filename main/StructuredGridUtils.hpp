@@ -100,6 +100,11 @@ namespace grids {
 
         [[nodiscard]] size_t worker() const { return t_worker; }
 
+        [[nodiscard]] size_t virtualTile(size_t numTilesPerIpu = DefaultNumTilesPerIpu) const {
+            return t_ipu * numTilesPerIpu + t_tile;
+        }
+
+
     };
 
 
