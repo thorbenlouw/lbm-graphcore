@@ -107,6 +107,7 @@ namespace lbm {
         return average_velocity * params.reynolds_dim / viscosity;
     }
 
+
     auto writeAverageVelocities(const std::string &filename, const std::vector<float> &av_vels) -> bool {
         std::ofstream file;
         file.open(filename, std::ios::out);

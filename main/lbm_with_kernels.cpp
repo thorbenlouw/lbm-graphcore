@@ -24,7 +24,6 @@ using namespace popops;
 
 using TensorMap = std::map<std::string, Tensor>;
 
-
 auto applySlice(Tensor &tensor, grids::Slice2D slice) -> Tensor {
     return
             tensor.slice(slice.rows().from(), slice.rows().to(), 0)
@@ -243,67 +242,28 @@ timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors,
     };
 }
 
-auto mapCellsToTiles(Graph &graph, Tensor &cells, const grids::GridPartitioning &tileMappings, bool print = false) {
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
-    for (const auto&[target, slice]: tileMappings) {
-        const auto tile = target.virtualTile(numTilesPerIpu);
-
-        if (print) {
-            std::cout << "tile: " << tile << " ipu: " << target.ipu() << ":" << target.tile() << ":"
-                      << target.worker() <<
-                      "(r: " << slice.rows().from() << ",c: " << slice.cols().from() << ",w: " << slice.width() <<
-                      ",h: " << slice.height() << std::endl;
-        }
-        graph.setTileMapping(cells
-                                     .slice(slice.rows().from(), slice.rows().to(), 0)
-                                     .slice(slice.cols().from(), slice.cols().to(), 1),
-                             tile);
-    }
-}
-
-
-auto main(int argc, char *argv[]) -> int {
-    double total_compute_time = 0.0;
-
-    auto timedStep = [&total_compute_time](const std::string description, auto f,
-                                           bool addToComputeTime = false) {
-        std::cerr << std::setw(60) << description;
-        auto tic = std::chrono::high_resolution_clock::now();
-        f();
-        auto toc = std::chrono::high_resolution_clock::now();
-        auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
-        std::cerr << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
-        if (addToComputeTime) total_compute_time += diff;
-    };
-
-    if (argc < 3) {
-        std::cerr << "Expected usage: " << argv[0] << " <params_file> <obstacles_file> <num_ipus::=0>" << std::endl;
+auto compile(int argc, char *argv[]) -> int {
+    if (argc < 6) {
+        std::cerr << "Expected usage: " << argv[0]
+                  << " compile <device:{model|ipu}> <num_ipus> <params_file> <output_file>"
+                  << std::endl;
         return EXIT_FAILURE;
     }
+    const auto deviceArg = std::string{argv[2]};
+    const auto numIpusArg = std::stoi(std::string{argv[3]});
+    const auto paramsFileArg = std::string{argv[4]};
+    const auto outputFilename = std::string{argv[5]};
 
-
-    auto params = lbm::Params::fromFile(argv[1]);
+    auto params = lbm::Params::fromFile(paramsFileArg);
     if (!params.has_value()) {
         std::cerr << "Could not parse parameters file. Aborting" << std::endl;
         return EXIT_FAILURE;
     }
-    auto obstacles = lbm::Obstacles::fromFile(params->nx, params->ny, argv[2]);
-    if (!obstacles.has_value()) {
-        std::cerr << "Could not parse obstacles file" << std::endl;
-        return EXIT_FAILURE;
-    }
 
-    auto cells = lbm::Cells(params->nx, params->ny);
-    cells.initialise(*params);
-
-
-    auto numIPus = argc == 4 ? atoi(argv[3]) : 1;
-    auto device = lbm::getIpuModel(numIPus);
-//    auto device = lbm::getIpuDevice(numIPus );
+    auto device = deviceArg == "ipu" ? utils::getIpuDevice(numIpusArg) : utils::getIpuModel(numIpusArg);
     if (!device.has_value()) {
         return EXIT_FAILURE;
     }
-
 
     auto numTilesPerIpu = device->getTarget().getNumTiles() / device->getTarget().getNumIPUs();
     auto numWorkers = device->getTarget().getNumWorkerContexts();
@@ -328,118 +288,192 @@ auto main(int argc, char *argv[]) -> int {
     grids::serializeToJson(workerGranularityMappings, "/tmp/partitioning.json");
 
     auto tensors = std::map<std::string, Tensor>{};
+    auto programs = std::vector<Program>{};
 
-    std::chrono::high_resolution_clock::time_point tic, toc;
-
-    //------
     Graph graph(device.value().getTarget());
 
-    timedStep("Building computational graph",
-              [&]() {
-                  popops::addCodelets(graph);
+    utils::timedStep("Building computational graph",
+                     [&]() {
+                         popops::addCodelets(graph);
 
-                  graph.addCodelets("D2Q9Codelets.cpp");
+                         graph.addCodelets("D2Q9Codelets.cpp");
 
-                  tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
-                                                        "av_vel");
-                  tensors["cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds}, "cells");
-                  tensors["tmp_cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
-                                                           "tmp_cells");
-                  tensors["obstacles"] = graph.addVariable(BOOL, {params->ny, params->nx}, "obstacles");
-                  tensors["perWorkerPartialSums"] = graph.addVariable(FLOAT,
-                                                                      {numWorkers * numTilesPerIpu * numIpus},
-                                                                      poplar::VariableMappingMethod::LINEAR,
-                                                                      "perWorkerPartialSums");
-                  tensors["perWorkerPartialCounts"] = graph.addVariable(INT,
-                                                                        {numWorkers * numTilesPerIpu * numIpus},
-                                                                        poplar::VariableMappingMethod::LINEAR,
-                                                                        "perWorkerPartialCounts");
+                         tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
+                                                               "av_vel");
+                         tensors["cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds}, "cells");
+                         tensors["tmp_cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
+                                                                  "tmp_cells");
+                         tensors["obstacles"] = graph.addVariable(BOOL, {params->ny, params->nx}, "obstacles");
+                         tensors["perWorkerPartialSums"] = graph.addVariable(FLOAT,
+                                                                             {numWorkers * numTilesPerIpu * numIpus},
+                                                                             poplar::VariableMappingMethod::LINEAR,
+                                                                             "perWorkerPartialSums");
+                         tensors["perWorkerPartialCounts"] = graph.addVariable(INT,
+                                                                               {numWorkers * numTilesPerIpu * numIpus},
+                                                                               poplar::VariableMappingMethod::LINEAR,
+                                                                               "perWorkerPartialCounts");
 
-                  tensors["reducedSum"] = graph.addVariable(FLOAT, {}, "reducedSum");
-                  graph.setInitialValue(tensors["reducedSum"], 0.f);
-                  graph.setTileMapping(tensors["reducedSum"], 0);
-                  tensors["reducedCount"] = graph.addVariable(INT, {}, "reducedCount");
-                  graph.setTileMapping(tensors["reducedCount"], 0);
-                  graph.setInitialValue(tensors["reducedCount"], 0u);
+                         tensors["reducedSum"] = graph.addVariable(FLOAT, {}, "reducedSum");
+                         graph.setInitialValue(tensors["reducedSum"], 0.f);
+                         graph.setTileMapping(tensors["reducedSum"], 0);
+                         tensors["reducedCount"] = graph.addVariable(INT, {}, "reducedCount");
+                         graph.setTileMapping(tensors["reducedCount"], 0);
+                         graph.setInitialValue(tensors["reducedCount"], 0u);
+
+                         utils::mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
+                         utils::mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
+                         utils::mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
+
+                         tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
+                         graph.setTileMapping(tensors["counter"], 0);
+                         graph.setInitialValue(tensors["counter"], 0);
 
 
-                  mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
-                  mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
-                  mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
+                         auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
+                         auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
+                                                                              lbm::NumSpeeds * params->nx * params->ny);
+                         auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
+                                                                        lbm::NumSpeeds * params->nx * params->ny);
+                         auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL,
+                                                                            params->nx * params->ny);
 
-                  tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
-                  graph.setTileMapping(tensors["counter"], 0);
-                  graph.setInitialValue(tensors["counter"], 0);
-              });
+                         auto copyCellsAndObstaclesToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
+                                                                       Copy(inStreamObstacles, tensors["obstacles"]));
+                         auto streamBackToHostProg = Sequence(
+                                 Copy(tensors["cells"], outStreamFinalCells),
+                                 Copy(tensors["av_vel"], outStreamAveVelocities)
+                         );
+
+                         auto prog = Repeat(params->maxIters, Sequence{
+                                 timestep(graph, *params, tensors, workerGranularityMappings),
+                                 averageVelocity(graph, *params, tensors, workerGranularityMappings)
+                         });
+                         programs.push_back(copyCellsAndObstaclesToDevice);
+                         programs.push_back(prog);
+                         programs.push_back(streamBackToHostProg);
+
+                         if (auto dumpGraphVisualisations =
+                                     std::getenv("DUMP_GRAPH_VIZ") != nullptr;  dumpGraphVisualisations) {
+                             ofstream vertexGraph;
+                             vertexGraph.open("vertexgraph.dot");
+                             graph.outputVertexGraph(vertexGraph,
+                                                     programs);
+                             vertexGraph.close();
+
+                             ofstream computeGraph;
+                             computeGraph.open("computegraph.dot");
+                             graph.outputComputeGraph(computeGraph,
+                                                      programs);
+                             computeGraph.close();
+                         }
+                     });
+
+
+    auto exe = std::optional<Executable>{};
+    utils::timedStep("Compiling graph", [&]() -> void {
+        ProgressFunc progressFunc = {[](int a, int b) -> void { std::cerr << a << "/" << b << std::endl; }};
+        exe = {poplar::compileGraph(graph, programs,
+                                    utils::POPLAR_ENGINE_OPTIONS_DEBUG,
+                                    progressFunc)};
+    });
+
+    utils::timedStep("Serializing executable", [&]() -> void {
+        ofstream exe_file;
+        exe_file.open(outputFilename);
+        exe->serialize(exe_file);
+        exe_file.close();
+    });
+
+    utils::timedStep("Serializing executable", [&]() -> void {
+        utils::serializeGraph(graph);
+    });
+
+    std::cout << "==done==" << std::endl;
+
+    return EXIT_SUCCESS;
+}
+
+auto run(int argc, char *argv[]) -> int {
+    if (argc < 6) {
+        std::cerr << "Expected usage: " << argv[0]
+                  << " run  <device:{model|ipu}> <num_ipus> <compiled_graph> <params_file> <obstacles_file>"
+                  << std::endl;
+        return EXIT_FAILURE;
+    }
+    const auto graphFilenameArg = std::string{argv[4]};
+    const auto paramsFileArg = std::string{argv[5]};
+    const auto obstaclesFileArg = std::string{argv[6]};
+
+    const auto deviceArg = std::string{argv[2]};
+    const auto numIpusArg = std::stoi(std::string{argv[3]});
+
+
+    auto params = lbm::Params::fromFile(paramsFileArg);
+    if (!params.has_value()) {
+        std::cerr << "Could not parse parameters file. Aborting" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    auto obstacles = lbm::Obstacles::fromFile(params->nx, params->ny, argv[2]);
+    if (!obstacles.has_value()) {
+        std::cerr << "Could not parse obstacles file" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    auto device = deviceArg == "ipu" ? utils::getIpuDevice(numIpusArg) : utils::getIpuModel(numIpusArg);
+    if (!device.has_value()) {
+        return EXIT_FAILURE;
+    }
+
+    double total_compute_time = 0.0;
+
+
+    auto cells = lbm::Cells(params->nx, params->ny);
+    cells.initialise(*params);
+
 
     std::unique_ptr<Engine> engine;
     auto av_vels = std::vector<float>(params->maxIters, 0.0f);
 
-    timedStep("Creating engine", [&]() {
 
-        auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
-        auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
-                                                             lbm::NumSpeeds * params->nx * params->ny);
-        auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
-                                                       lbm::NumSpeeds * params->nx * params->ny);
-        auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL, params->nx * params->ny);
+    ifstream exe_file;
+    exe_file.open(graphFilenameArg);
+    auto exe = poplar::Executable::deserialize(exe_file);
+    exe_file.close();
 
-        auto copyCellsAndObstaclesToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
-                                                      Copy(inStreamObstacles, tensors["obstacles"]));
-        auto streamBackToHostProg = Sequence(
-                Copy(tensors["cells"], outStreamFinalCells),
-                Copy(tensors["av_vel"], outStreamAveVelocities)
-        );
+    utils::timedStep("Creating engine and connecting streams", [&]() {
+        engine = std::make_unique<Engine>(exe, utils::POPLAR_ENGINE_OPTIONS_DEBUG);
 
-        auto prog = Repeat(params->maxIters, Sequence{
-                timestep(graph, *params, tensors, workerGranularityMappings),
-                averageVelocity(graph, *params, tensors, workerGranularityMappings)
-        });
-
-
-        engine = std::unique_ptr<Engine>(
-                new Engine(graph, {copyCellsAndObstaclesToDevice, prog, streamBackToHostProg},
-                           lbm::POPLAR_ENGINE_OPTIONS_DEBUG,
-                           [](int a, int b) -> void { std::cerr << a << "/" << b << std::endl; }));
-
-        engine->connectStream(outStreamAveVelocities, av_vels.data());
-        engine->connectStream(outStreamFinalCells, cells.getData());
-        engine->connectStream(inStreamCells, cells.getData());
-        engine->connectStream(inStreamObstacles, obstacles->getData());
-
-        engine->load(device.value());
-
+        engine->connectStream("<<av_vel", av_vels.data());
+        engine->connectStream("<<cells", cells.getData());
+        engine->connectStream(">>cells", cells.getData());
+        engine->connectStream(">>obstacles", obstacles->getData());
 
     });
-//
-//    timedStep("Compiling graph", [&]() {
-//auto exe = poplar::compileGraph(graph, ArrayRef{copyCellsAndObstaclesToDevice, prog, streamBackToHostProg},
-//                                POPLAR_ENGINE_OPTIONS_DEBUG,
-//                                [](int a, int b) -> void { std::cerr << a << "/" << b << std::endl; });
-//engine->load(device.value());
-//
-//    });
 
-    timedStep("Running copy to device step", [&]() {
+    utils::timedStep("Loading graph to device", [&]() {
+        engine->load(device.value());
+    });
+
+    utils::timedStep("Running copy to device step", [&]() {
         engine->run(0);
     });
 
-    timedStep("Running LBM", [&]() {
+    total_compute_time += utils::timedStep("Running LBM", [&]() {
         engine->run(1);
-    }, true);
+    });
 
-    timedStep("Running copy to host step", [&]() {
+    utils::timedStep("Running copy to host step", [&]() {
         engine->run(2);
     });
 
-    timedStep("Writing output files ", [&]() {
+    utils::timedStep("Writing output files ", [&]() {
         lbm::writeAverageVelocities("av_vels.dat", av_vels);
         lbm::writeResults("final_state.dat", *params, *obstacles, cells);
     });
 
-
-    timedStep("Capturing profiling info", [&]() {
-        lbm::captureProfileInfo(*engine, graph);
+    utils::timedStep("Capturing profiling info", [&]() {
+        utils::captureProfileInfo(*engine);
     });
 
 //
@@ -456,4 +490,16 @@ auto main(int argc, char *argv[]) -> int {
               << lbm::reynoldsNumber(*params, av_vels[params->maxIters - 1]) << std::endl;
 
     return EXIT_SUCCESS;
+}
+
+auto main(int argc, char *argv[]) -> int {
+    assert(argc > 1);
+    auto command = argv[1];
+    if (strcmp(command, "compile") == 0) {
+        return compile(argc, argv);
+    } else if (strcmp(command, "run") == 0) {
+        return run(argc, argv);
+    }
+    return EXIT_FAILURE;
+
 }
