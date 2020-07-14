@@ -8,6 +8,7 @@
 #include <poplar/Engine.hpp>
 #include <poplar/IPUModel.hpp>
 #include <poplar/Program.hpp>
+#include <chrono>
 
 #include <poplar/DeviceManager.hpp>
 #include <iomanip>
@@ -106,6 +107,14 @@ namespace utils {
                                  tile);
         }
     }
+
+
+    auto applySlice(Tensor &tensor, grids::Slice2D slice) -> Tensor {
+        return
+                tensor.slice(slice.rows().from(), slice.rows().to(), 0)
+                        .slice(slice.cols().from(), slice.cols().to(),
+                               1).flatten();
+    };
 
 
     const auto timedStep = [](const std::string description, auto f) -> double {

@@ -6,14 +6,18 @@ set(Main_SRCS
         LbmParams.hpp
         LatticeBoltzmann.hpp
         StructuredGridUtils.hpp
+        cxxopts.hpp
         )
-
 
 add_executable(lbm
         lbm.cpp
         ${Main_SRCS}
         )
 
+add_executable(lbm_runner
+        LbmRunner.cpp
+        ${Main_SRCS}
+        )
 
 add_executable(stencil
         stencil.cpp
@@ -30,6 +34,10 @@ target_link_libraries(lbm
         poplar
         poputil
         poplin
+        )
+
+target_link_libraries(lbm_runner
+        poplar
         )
 
 target_link_libraries(lbm_with_kernels
