@@ -2,7 +2,7 @@
 #include "LbmParams.hpp"
 #include "LatticeBoltzmann.hpp"
 #include "StructuredGridUtils.hpp"
-#include "cxxopts.hpp"
+#include <cxxopts.hpp>
 #include <poplar/Engine.hpp>
 
 using namespace poplar;

@@ -80,6 +80,10 @@ namespace lbm {
             return data.get();
         };
 
+        auto data_ptr() -> const std::unique_ptr<bool[]>& {
+            return data;
+        }
+
         [[nodiscard]] auto at(const size_t x, const size_t y) const -> bool {
             return data[y * nx + x];
         }

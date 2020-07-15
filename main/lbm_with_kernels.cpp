@@ -8,7 +8,7 @@
 #include <poplar/Program.hpp>
 #include <algorithm>
 #include <random>
-#include "cxxopts.hpp"
+#include <cxxopts.hpp>
 
 #include "GraphcoreUtils.hpp"
 #include "LbmParams.hpp"

@@ -4,26 +4,38 @@
 #include <poplar/IPUModel.hpp>
 #include <popops/Reduce.hpp>
 #include <popops/codelets.hpp>
+#include <iomanip>
 #include <iostream>
 #include <poplar/Program.hpp>
+#include <chrono>
 #include <algorithm>
+#include <poputil/Broadcast.hpp>
 #include <random>
+
 #include <cxxopts.hpp>
+#include <lodepng.h>
 
 #include "GraphcoreUtils.hpp"
-#include "LbmParams.hpp"
-#include "LatticeBoltzmann.hpp"
 #include "StructuredGridUtils.hpp"
 
 
 using namespace poplar;
 using namespace poplar::program;
 using namespace popops;
-using namespace utils;
+
+using TensorMap = std::map<std::string, Tensor>;
+
+
+auto applySlice(Tensor &tensor, grids::Slice2D slice) -> Tensor {
+    return
+            tensor.slice(slice.rows().from(), slice.rows().to(), 0)
+                    .slice(slice.cols().from(), slice.cols().to(),
+                           1).flatten();
+};
 
 auto
 averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
-                const grids::GridPartitioning &workerLevelMappings) -> Program {
+                grids::TileMappings &workerLevelMappings) -> Program {
 
     // As part of collision we already calculated a partialSum (float) and partialCount (unsigned) for each worker
     // which represents the summed normedVelocity and count of cells which are not masked by obstacles. Now we reduce them
@@ -43,16 +55,14 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
     const auto numIpus = graph.getTarget().getNumIPUs();
     const auto numTilesPerIpu = graph.getTarget().getNumTiles() / numIpus;
 
-    auto ipuPartitioning = grids::partitionForIpus({params.maxIters, 1}, numIpus, params.maxIters / numIpus);
-    assert(ipuPartitioning.has_value());
-    auto avVelsTileMapping = grids::toTilePartitions(
-            *ipuPartitioning,
-            graph.getTarget().getNumIPUs()
+    auto avVelsTileMapping = grids::partitionGridToTilesForSingleIpu(
+            {params.maxIters, 1},
+            numTilesPerIpu * numIpus
     );
 
     ComputeSet appendResultCs = graph.addComputeSet("appendReducedSum");
     for (const auto &[target, slice] : avVelsTileMapping) {
-        auto tile = target.virtualTile(numTilesPerIpu);
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
 
         auto appendReducedSumVertex = graph.addVertex(
                 appendResultCs,
@@ -85,7 +95,7 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
                                            {{"index", tensors["counter"]}   // Connect input 'b' of the
                                            });
     graph.setCycleEstimate(incrementVertex, 13);
-    graph.setTileMapping(incrementVertex, numTilesPerIpu - 1);
+    graph.setTileMapping(incrementVertex, 0);
 
 
     Sequence seq;
@@ -98,15 +108,14 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
 }
 
 auto
-collision(Graph &graph, const lbm::Params &params, TensorMap &tensors,
-          const grids::GridPartitioning &mappings) -> Program {
+collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
     const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
     const auto numWorkersPerTile = graph.getTarget().getNumWorkerContexts();
 
     ComputeSet collisionCs = graph.addComputeSet("collision");
 
     for (const auto &[target, slice] : mappings) {
-        auto tile = target.virtualTile(numTilesPerIpu);
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
 
         auto v = graph.addVertex(collisionCs,
@@ -136,7 +145,7 @@ collision(Graph &graph, const lbm::Params &params, TensorMap &tensors,
 
 auto propagate(Graph &graph,
                const lbm::Params &params, TensorMap &tensors,
-               const grids::GridPartitioning &mappings) -> Program {
+               grids::TileMappings &mappings) -> Program {
     const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
 
     ComputeSet propagateCs = graph.addComputeSet("propagate");
@@ -144,7 +153,7 @@ auto propagate(Graph &graph,
 
     auto fullSize = grids::Size2D(params.ny, params.nx);
     for (const auto &[target, slice] : mappings) {
-        auto tile = target.virtualTile(numTilesPerIpu);
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto halos = grids::Halos::forSlice(slice, fullSize);
         auto v = graph.addVertex(propagateCs,
@@ -190,22 +199,18 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
 
     // For now, let's try the approach of spreading accelerate computation over more tiles, even if that
     // means redistributing data from cells and obstacles (i.e. keep tiles busy rather than minimise data transfer)
-    // TODO actually just run on the tiles where this stuff is mapped
-    const auto ipuLevelMapping = grids::partitionForIpus({1, params.nx}, graph.getTarget().getNumIPUs(), params.nx);
-
-    assert(ipuLevelMapping.has_value());
-    auto tileGranularityMappings = grids::toTilePartitions(
-            *ipuLevelMapping,
+    auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
+            {1, params.nx},
             numTilesPerIpu
     );
-    auto workerGranularityMappings = grids::toWorkerPartitions(
+    auto workerGranularityMappings = grids::toWorkerMappings(
             tileGranularityMappings,
             numWorkers
     );
 
     for (const auto &[target, slice] : workerGranularityMappings) {
 
-        auto tile = target.virtualTile(numTilesPerIpu);
+        auto tile = target.ipu() * numTilesPerIpu + target.tile();
 
         auto numCellsForThisWorker = slice.width() * slice.height();
         auto v = graph.addVertex(accelerateCs,
@@ -223,8 +228,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
 
 
 auto
-timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors,
-         const grids::GridPartitioning &mappings) -> Program {
+timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
     return Sequence{
             accelerate_flow(graph, params, tensors),
             propagate(graph, params, tensors, mappings),
@@ -232,68 +236,75 @@ timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors,
     };
 }
 
-auto main(int argc, char *argv[]) -> int {
-    std::string outputFilename, paramsFileArg;
-    unsigned numIpusArg = 1u;
+auto mapCellsToTiles(Graph &graph, Tensor &cells, grids::TileMappings &tileMappings, bool print = false) {
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles();
+    for (const auto&[target, slice]: tileMappings) {
+        const auto tile = target.ipu() * numTilesPerIpu + target.tile();
 
-    cxxopts::Options options(argv[0], " - Runs a Lattice Boltzmann graph on the IPU or IPU Model");
-    options.add_options()
-            ("p,profile", "Capture profiling")
-            ("n,num-ipus", "number of ipus to use", cxxopts::value<unsigned>(numIpusArg)->default_value("1"))
-            ("params", "filename of parameters file", cxxopts::value<std::string>(paramsFileArg))
-            ("o,output", "filename of compiled graph", cxxopts::value<std::string>(outputFilename));
-    auto opts = options.parse(argc, argv);
-
-    auto captureProfile = opts["profile"].as<bool>();
-    if (captureProfile) {
-        std::cout << "Configuring executable to capture profile information" << std::endl;
-    }
-
-    auto params = lbm::Params::fromFile(paramsFileArg);
-    if (!params.has_value()) {
-        std::cerr << "Could not parse parameters file. Aborting" << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    auto device = std::optional<Device>{};
-    if (captureProfile) {
-        device = utils::getIpuDevice(numIpusArg);
-        if (!device.has_value()) {
-            return EXIT_FAILURE;
+        if (print) {
+            std::cout << "tile: " << tile << " target: " << target.ipu() << ":" << target.tile() << ":"
+                      << target.worker() <<
+                      "(r: " << slice.rows().from() << ",c: " << slice.cols().from() << ",w: " << slice.width() <<
+                      ",h: " << slice.height() << std::endl;
         }
+        graph.setTileMapping(cells
+                                     .slice(slice.rows().from(), slice.rows().to(), 0)
+                                     .slice(slice.cols().from(), slice.cols().to(), 1),
+                             tile);
     }
+}
 
-    auto target = captureProfile ? device->getTarget()
-                                 : Target::createIPUTarget(numIpusArg,
-                                                           "ipu1",
-                                                           utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
 
-    auto numTilesPerIpu = target.getNumTiles() / target.getNumIPUs();
-    auto numWorkers = target.getNumWorkerContexts();
-    auto numIpus = target.getNumIPUs();
+auto main(int argc, char *argv[]) -> int {
+    double total_compute_time = 0.0;
 
-    const auto ipuLevelMapping = grids::partitionForIpus({params->ny, params->nx}, numIpus, 2000 * 1000);
-    if (!ipuLevelMapping.has_value()) {
-        std::cerr << "Couldn't find a way to partition the input parameter space over the given number of IPUs"
-                  << std::endl;
+    auto timedStep = [&total_compute_time](const std::string description, auto f,
+                                           bool addToComputeTime = false) {
+        std::cerr << std::setw(60) << description;
+        auto tic = std::chrono::high_resolution_clock::now();
+        f();
+        auto toc = std::chrono::high_resolution_clock::now();
+        auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        std::cerr << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
+        if (addToComputeTime) total_compute_time += diff;
+    };
+
+    if (argc != 3) {
+        std::cerr << "Expected usage: " << argv[0] << " <image_file> <obstacles_file>" << std::endl;
         return EXIT_FAILURE;
     }
-    const auto tileGranularityMappings = grids::toTilePartitions(*ipuLevelMapping,
-                                                                 numTilesPerIpu,
-                                                                 6,
-                                                                 6
+
+    auto device = lbm::getIpuModel();
+//    auto device = lbm::getIpuDevice();
+    if (!device.has_value()) {
+        return EXIT_FAILURE;
+    }
+
+    const auto nx = 128;
+    const auto ny = 128;
+    const auto n_iter = 100;
+
+    auto numTilesPerIpu = device->getTarget().getNumTiles() / device->getTarget().getNumIPUs();
+    auto numWorkers = device->getTarget().getNumWorkerContexts();
+    auto numIpus = device->getTarget().getNumIPUs();
+
+    auto ipuGranularityMapping = grids::partitionGridForIpus({params->ny, params->nx}, numIpus);
+
+    auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
+            {params->ny, params->nx},
+            numTilesPerIpu
     );
-    const auto workerGranularityMappings = grids::toWorkerPartitions(
+    auto workerGranularityMappings = grids::toWorkerMappings(
             tileGranularityMappings,
             numWorkers
     );
 
-    grids::serializeToJson(workerGranularityMappings, "partitioning.json");
-
     auto tensors = std::map<std::string, Tensor>{};
-    auto programs = std::vector<Program>{};
 
-    Graph graph(target);
+    std::chrono::high_resolution_clock::time_point tic, toc;
+
+    //------
+    Graph graph(device.value().getTarget());
 
     timedStep("Building computational graph",
               [&]() {
@@ -323,76 +334,85 @@ auto main(int argc, char *argv[]) -> int {
                   graph.setTileMapping(tensors["reducedCount"], 0);
                   graph.setInitialValue(tensors["reducedCount"], 0u);
 
+
                   mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
                   mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
                   mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
 
                   tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
-                  graph.setTileMapping(tensors["counter"], numTilesPerIpu - 1);
+                  graph.setTileMapping(tensors["counter"], 0);
                   graph.setInitialValue(tensors["counter"], 0);
-
-
-                  auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
-                  auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
-                                                                       lbm::NumSpeeds * params->nx * params->ny);
-                  auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
-                                                                 lbm::NumSpeeds * params->nx * params->ny);
-                  auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL,
-                                                                     params->nx * params->ny);
-
-                  auto copyCellsAndObstaclesToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
-                                                                Copy(inStreamObstacles, tensors["obstacles"]));
-                  auto streamBackToHostProg = Sequence(
-                          Copy(tensors["cells"], outStreamFinalCells),
-                          Copy(tensors["av_vel"], outStreamAveVelocities)
-                  );
-
-                  auto prog = Repeat(params->maxIters, Sequence{
-                          timestep(graph, *params, tensors, workerGranularityMappings),
-                          averageVelocity(graph, *params, tensors, workerGranularityMappings)
-                  });
-                  programs.push_back(copyCellsAndObstaclesToDevice);
-                  programs.push_back(prog);
-                  programs.push_back(streamBackToHostProg);
-
-                  if (auto dumpGraphVisualisations =
-                              std::getenv("DUMP_GRAPH_VIZ") != nullptr;  dumpGraphVisualisations) {
-                      ofstream vertexGraph;
-                      vertexGraph.open("vertexgraph.dot");
-                      graph.outputVertexGraph(vertexGraph,
-                                              programs);
-                      vertexGraph.close();
-
-                      ofstream computeGraph;
-                      computeGraph.open("computegraph.dot");
-                      graph.outputComputeGraph(computeGraph,
-                                               programs);
-                      computeGraph.close();
-                  }
               });
 
+    std::unique_ptr<Engine> engine;
+    auto av_vels = std::vector<float>(params->maxIters, 0.0f);
 
-    auto exe = std::optional<Executable>{};
-    timedStep("Compiling graph", [&]() -> void {
-        ProgressFunc progressFunc = {
-                [](int a, int b) -> void { std::cerr << "  Step " << a << " of " << b << std::endl; }};
-        exe = {poplar::compileGraph(graph, programs,
-                                    captureProfile ? POPLAR_ENGINE_OPTIONS_DEBUG : POPLAR_ENGINE_OPTIONS_NODEBUG,
-                                    progressFunc)};
+    timedStep("Creating engine and loading computational graph", [&]() {
+
+        auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
+        auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
+                                                             lbm::NumSpeeds * params->nx * params->ny);
+        auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
+                                                       lbm::NumSpeeds * params->nx * params->ny);
+        auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL, params->nx * params->ny);
+
+        auto copyCellsAndObstaclesToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
+                                                      Copy(inStreamObstacles, tensors["obstacles"]));
+        auto streamBackToHostProg = Sequence(
+                Copy(tensors["cells"], outStreamFinalCells),
+                Copy(tensors["av_vel"], outStreamAveVelocities)
+        );
+
+        auto prog = Repeat(params->maxIters, Sequence{
+                timestep(graph, *params, tensors, workerGranularityMappings),
+                averageVelocity(graph, *params, tensors, workerGranularityMappings)
+        });
+
+        engine = std::unique_ptr<Engine>(
+                new Engine(graph, {copyCellsAndObstaclesToDevice, prog, streamBackToHostProg},
+                           lbm::POPLAR_ENGINE_OPTIONS_DEBUG));
+        engine->connectStream(outStreamAveVelocities, av_vels.data());
+        engine->connectStream(outStreamFinalCells, cells.getData());
+        engine->connectStream(inStreamCells, cells.getData());
+        engine->connectStream(inStreamObstacles, obstacles->getData());
+
+        engine->load(device.value());
     });
 
-    timedStep("Serializing executable", [&]() -> void {
-        ofstream exe_file;
-        exe_file.open(outputFilename);
-        exe->serialize(exe_file);
-        exe_file.close();
+    timedStep("Running copy to device step", [&]() {
+        engine->run(0);
     });
 
-    timedStep("Serializing graph for analysis", [&]() -> void {
-        serializeGraph(graph);
+    timedStep("Running LBM", [&]() {
+        engine->run(1);
+    }, true);
+
+    timedStep("Running copy to host step", [&]() {
+        engine->run(2);
     });
+
+    timedStep("Writing output files ", [&]() {
+        lbm::writeAverageVelocities("av_vels.dat", av_vels);
+        lbm::writeResults("final_state.dat", *params, *obstacles, cells);
+    });
+
+
+    timedStep("Capturing profiling info", [&]() {
+        lbm::captureProfileInfo(*engine, graph);
+    });
+
+//
+//    engine.printProfileSummary(std::cout,
+//                               OptionFlags{{"showExecutionSteps", "true"}});
+
 
     std::cout << "==done==" << std::endl;
+    std::cout << "Total compute time was \t" << std::right << std::setw(12) << std::setprecision(5)
+              << total_compute_time
+              << "s" << std::endl;
+
+    std::cout << "Reynolds number:  \t" << std::right << std::setw(12) << std::setprecision(12) << std::scientific
+              << lbm::reynoldsNumber(*params, av_vels[params->maxIters - 1]) << std::endl;
 
     return EXIT_SUCCESS;
 }

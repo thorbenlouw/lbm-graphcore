@@ -1,16 +1,24 @@
 set(CMAKE_CXX_STANDARD 17)
 
+include_directories(lib/lodepng)
+include_directories(lib/cxxopts)
+
 set(Main_SRCS
         DoubleRoll.hpp
         GraphcoreUtils.hpp
         LbmParams.hpp
         LatticeBoltzmann.hpp
         StructuredGridUtils.hpp
-        cxxopts.hpp
         )
 
 add_executable(lbm
         lbm.cpp
+        ${Main_SRCS}
+        )
+
+
+add_executable(cpu-lbm
+        CpuLbm.cpp
         ${Main_SRCS}
         )
 
@@ -21,6 +29,7 @@ add_executable(lbm_runner
 
 add_executable(stencil
         stencil.cpp
+        lib/lodepng/lodepng.cpp
         ${Main_SRCS}
         )
 
