@@ -1,5 +1,6 @@
 set(CMAKE_CXX_STANDARD 17)
 
+
 include_directories(lib/lodepng)
 include_directories(lib/cxxopts)
 
@@ -9,6 +10,7 @@ set(Main_SRCS
         LbmParams.hpp
         LatticeBoltzmann.hpp
         StructuredGridUtils.hpp
+        StencilUtils.hpp
         )
 
 add_executable(lbm
@@ -29,6 +31,13 @@ add_executable(lbm_runner
 
 add_executable(stencil
         stencil.cpp
+        lib/lodepng/lodepng.cpp
+        ${Main_SRCS}
+        )
+
+
+add_executable(cpu_stencil
+        CpuStencil.cpp
         lib/lodepng/lodepng.cpp
         ${Main_SRCS}
         )
@@ -58,6 +67,10 @@ target_link_libraries(lbm_with_kernels
 target_link_libraries(stencil
         poplar
         poputil
+        )
+
+target_link_libraries(cpu_stencil
+        PUBLIC OpenMP::OpenMP_CXX
         )
 
 install(TARGETS lbm DESTINATION bin)
