@@ -35,6 +35,11 @@ add_executable(stencil
         ${Main_SRCS}
         )
 
+add_executable(poplibs_stencil
+        PoplibsStencil.cpp
+        lib/lodepng/lodepng.cpp
+        ${Main_SRCS}
+        )
 
 add_executable(cpu_stencil
         CpuStencil.cpp
@@ -67,6 +72,13 @@ target_link_libraries(lbm_with_kernels
 target_link_libraries(stencil
         poplar
         poputil
+        )
+
+
+target_link_libraries(poplibs_stencil
+        poplar
+        poputil
+        poplin
         )
 
 target_link_libraries(cpu_stencil

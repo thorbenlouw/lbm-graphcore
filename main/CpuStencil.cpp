@@ -1,9 +1,7 @@
 #include <cstdlib>
 #include <cxxopts.hpp>
 #include <lodepng.h>
-#include <algorithm>
 #include "StructuredGridUtils.hpp"
-#include <limits>
 #include <chrono>
 #include "StencilUtils.hpp"
 

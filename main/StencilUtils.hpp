@@ -1,5 +1,9 @@
-#ifndef LBM_GRAPHCORE_GRAPHCOREUTILS_H
-#define LBM_GRAPHCORE_GRAPHCOREUTILS_H
+
+#include <algorithm>
+#include <limits>
+
+#ifndef STENCIL_UTILS_H
+#define STENCIL_UTILS_H
 namespace stencil {
     constexpr auto NumChannels = 4u; // RGBA
 
@@ -110,7 +114,8 @@ namespace stencil {
         for (auto c = 0u; c < NumChannels; c++) {
             for (auto y = 0u; y < img.height; y++) {
                 for (auto x = 0u; x < img.width; x++) {
-                    const auto inIdx = c * (floatImage.height * floatImage.width) + (y + 1) * floatImage.width + (x + 1);
+                    const auto inIdx =
+                            c * (floatImage.height * floatImage.width) + (y + 1) * floatImage.width + (x + 1);
                     const auto outIdx = (y * img.width + x) * NumChannels + c;
 
                     auto rescaled = (max[c] == min[c]) ? 0.f :
