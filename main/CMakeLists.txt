@@ -30,7 +30,7 @@ add_executable(lbm_runner
         )
 
 add_executable(stencil
-        stencil.cpp
+        LowLevelStencil.cpp
         lib/lodepng/lodepng.cpp
         ${Main_SRCS}
         )

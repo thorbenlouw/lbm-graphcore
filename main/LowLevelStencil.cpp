@@ -13,7 +13,7 @@
 #include <random>
 
 #include <cxxopts.hpp>
-#include <lodepng.h>
+#include <lodepng.g>
 
 #include "GraphcoreUtils.hpp"
 #include "StructuredGridUtils.hpp"
