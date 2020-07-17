@@ -41,7 +41,7 @@ namespace stencil {
     }
 
 // buffer should be pre-allocated to the right size
-    auto toPaddedFloatImage(const Image &image, const std::unique_ptr<float[]> &buffer) -> ImageDescriptor {
+    auto toPaddedFloatImageChannelsFirst(const Image &image, const std::unique_ptr<float[]> &buffer) -> ImageDescriptor {
         auto fImg = ImageDescriptor{
                 .width= image.width + 2,
                 .height= image.height + 2,
@@ -90,7 +90,7 @@ namespace stencil {
         return fImg;
     }
 
-    auto toUnpaddedCharsImage(const ImageDescriptor &floatImage, const std::unique_ptr<float[]> &buffer) -> Image {
+    auto toUnpaddedCharsImageChannelsFirst(const ImageDescriptor &floatImage, const std::unique_ptr<float[]> &buffer) -> Image {
         auto img = Image{
                 .width= floatImage.width - 2,
                 .height= floatImage.height - 2,

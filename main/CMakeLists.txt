@@ -29,9 +29,15 @@ add_executable(lbm_runner
         ${Main_SRCS}
         )
 
-add_executable(stencil
+add_executable(low_level_stencil
         LowLevelStencil.cpp
         lib/lodepng/lodepng.cpp
+        ${Main_SRCS}
+        )
+
+
+add_executable(halo_regions
+        HaloRegionApproaches.cpp
         ${Main_SRCS}
         )
 
@@ -61,6 +67,13 @@ target_link_libraries(lbm
 
 target_link_libraries(lbm_runner
         poplar
+        poputil
+
+        )
+
+
+target_link_libraries(halo_regions
+        poplar
         )
 
 target_link_libraries(lbm_with_kernels
@@ -69,17 +82,19 @@ target_link_libraries(lbm_with_kernels
         poplin
         )
 
-target_link_libraries(stencil
-        poplar
-        poputil
-        )
-
 
 target_link_libraries(poplibs_stencil
         poplar
         poputil
         poplin
         )
+
+
+target_link_libraries(low_level_stencil
+        poplar
+        poputil
+        )
+
 
 target_link_libraries(cpu_stencil
         PUBLIC OpenMP::OpenMP_CXX
@@ -90,3 +105,5 @@ install(TARGETS lbm DESTINATION bin)
 install(TARGETS lbm_with_kernels DESTINATION bin)
 
 configure_file(D2Q9Codelets.cpp D2Q9Codelets.cpp COPYONLY)
+configure_file(StencilCodelet.cpp StencilCodelet.cpp COPYONLY)
+configure_file(HaloRegionApproachesCodelets.cpp HaloRegionApproachesCodelets.cpp COPYONLY)

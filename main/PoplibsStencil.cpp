@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
 
     auto img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
     auto tmp_img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
-    auto fImageDescr = toPaddedFloatImage(*maybeImg, img);
+    auto fImageDescr = toPaddedFloatImageChannelsFirst(*maybeImg, img);
 
     auto device = useIpuModel ? utils::getIpuModel(numIpus) : utils::getIpuDevice(numIpus);
 
@@ -214,7 +214,7 @@ int main(int argc, char *argv[]) {
     }
 
 
-    auto cImg = toUnpaddedCharsImage(fImageDescr, img);
+    auto cImg = toUnpaddedCharsImageChannelsFirst(fImageDescr, img);
 
     if (!savePng(cImg, outputFilename)) {
         return EXIT_FAILURE;

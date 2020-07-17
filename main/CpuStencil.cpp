@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
 
     alignas(64) auto img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
     alignas(64) auto tmp_img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
-    auto fImageDescr = toPaddedFloatImage(*maybeImg, img);
+    auto fImageDescr = toPaddedFloatImageChannelsFirst(*maybeImg, img);
 
     std::cout << "Running " << numIters << "(x2) iterations of stencil";
     auto tic = std::chrono::high_resolution_clock::now();
@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
     auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
     std::cerr << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
 
-    auto cImg = toUnpaddedCharsImage(fImageDescr, img);
+    auto cImg = toUnpaddedCharsImageChannelsFirst(fImageDescr, img);
 
     if (!savePng(cImg, outputFilename)) {
         return EXIT_FAILURE;
