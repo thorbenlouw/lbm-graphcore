@@ -68,12 +68,13 @@ target_link_libraries(lbm
 target_link_libraries(lbm_runner
         poplar
         poputil
-
         )
 
 
 target_link_libraries(halo_regions
         poplar
+        popops
+        poputil
         )
 
 target_link_libraries(lbm_with_kernels
