@@ -13,9 +13,7 @@
 
 #include <sstream>
 
-//constexpr auto NumTilesInIpuCol = 2u;
 constexpr auto NumTilesInIpuCol = 32u;
-constexpr auto NumTiles = 1216u;
 
 auto fill(Graph &graph, const Tensor &tensor, const float value, const unsigned tileNumber, ComputeSet &cs) -> void {
     auto v = graph.addVertex(cs,
@@ -29,7 +27,7 @@ auto fill(Graph &graph, const Tensor &tensor, const float value, const unsigned 
     graph.setTileMapping(v, tileNumber);
 }
 
-auto implicitStrategy(Graph &graph, vector<Program> &vector, const unsigned numTiles,
+auto implicitStrategy(Graph &graph, const unsigned numTiles,
                       const unsigned blockSizePerTile, const unsigned numIters) -> std::vector<Program> {
     const auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
@@ -39,6 +37,8 @@ auto implicitStrategy(Graph &graph, vector<Program> &vector, const unsigned numT
                                  "out");
 
     // Place the blocks of in and out on the right tiles
+    auto z = std::vector<float>(blockSizePerTile, 0.f);
+
     auto initCs = graph.addComputeSet("init");
     for (auto tile = 0u; tile < numTiles; tile++) {
         auto ipuRow = tile / NumTilesInIpuCol;
@@ -58,19 +58,105 @@ auto implicitStrategy(Graph &graph, vector<Program> &vector, const unsigned numT
     auto stencilProgram = [&]() -> Program {
         ComputeSet compute1 = graph.addComputeSet("implicitCompute1");
         ComputeSet compute2 = graph.addComputeSet("implicitCompute2");
-        const auto numTiles = NumTiles;//graph.getTarget().getNumTiles();;
         for (auto tile = 0u; tile < numTiles; tile++) {
+
+
             auto ipuRow = tile / NumTilesInIpuCol;
             auto ipuCol = tile % NumTilesInIpuCol;
             auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
+            auto maybeZerosVector = std::optional<Tensor>{};
+            auto maybeZeroScalar = std::optional<Tensor>{};
+
+            if (ipuRow == 0 || ipuRow == NumTilesInIpuRow - 1 || ipuCol == 0 || ipuCol == NumTilesInIpuCol - 1) {
+                maybeZerosVector = {graph.addConstant(FLOAT, {blockSizePerTile}, z.data(), "{0...}")};
+                graph.setTileMapping(*maybeZerosVector, tile);
+                maybeZeroScalar = {graph.addConstant(FLOAT, {}, 0.f, "0")};
+                graph.setTileMapping(*maybeZeroScalar, tile);
+            }
+
+            const auto block = [&](const Tensor &t, const int rowOffsetBlocks,
+                                   const int colOffsetBlocks) -> Tensor {
+                const auto startRow = ipuRow * blockSizePerTile + rowOffsetBlocks * blockSizePerTile;
+                const auto startCol = ipuCol * blockSizePerTile + colOffsetBlocks * blockSizePerTile;
+                return t.slice({startRow, startCol}, {startRow + blockSizePerTile, startCol + blockSizePerTile});
+            };
+
+            const auto n = [&](const Tensor &t) -> Tensor {
+                return ipuRow > 0
+                       ? block(t, -1, 0).slice({blockSizePerTile - 1, 1},
+                                               {blockSizePerTile, blockSizePerTile}).flatten()
+                       : *maybeZerosVector;
+            };
+            const auto s = [&](const Tensor &t) -> Tensor {
+                return ipuRow < NumTilesInIpuRow - 1
+                       ? block(t, 1, 0).slice({0, blockSizePerTile - 1},
+                                              {1, blockSizePerTile}).flatten()
+                       : *maybeZerosVector;
+            };
+            const auto e = [&](const Tensor &t) -> Tensor {
+                return ipuCol < NumTilesInIpuCol - 1
+                       ? block(t, 0, 1).slice({1, 0},
+                                              {blockSizePerTile, 1}).flatten()
+                       : *maybeZerosVector;
+            };
+            const auto w = [&](const Tensor &t) -> Tensor {
+                return ipuCol > 0
+                       ? block(t, 0, -1).slice({1, blockSizePerTile - 1},
+                                               {blockSizePerTile, blockSizePerTile}).flatten()
+                       : *maybeZerosVector;
+            };
+            const auto nw = [&](const Tensor &t) -> Tensor {
+                return ipuCol > 0 && ipuRow > 0
+                       ? block(t, -1, -1)[blockSizePerTile - 1][blockSizePerTile - 1]
+                       : *maybeZeroScalar;
+            };
+            const auto ne = [&](const Tensor &t) -> Tensor {
+                return ipuCol < NumTilesInIpuCol - 1 && ipuRow > 0
+                       ? block(t, -1, 1)[blockSizePerTile - 1][0]
+                       : *maybeZeroScalar;
+            };
+            const auto sw = [&](const Tensor &t) -> Tensor {
+                return ipuCol > 0 && ipuRow < NumTilesInIpuRow - 1
+                       ? block(t, 1, -1)[0][blockSizePerTile - 1]
+                       : *maybeZeroScalar;
+            };
+            const auto se = [&](const Tensor &t) -> Tensor {
+                return ipuCol < NumTilesInIpuCol - 1 && ipuRow < NumTilesInIpuRow - 1
+                       ? block(t, 1, 1)[0][0]
+                       : *maybeZeroScalar;
+            };
             auto v = graph.addVertex(compute1,
-                                     "IncludedHalosApproach<float>",
+                                     "ExtraHalosApproach<float>",
                                      {
-                                             {"in",  in[tile]},
-                                             {"out", out[tile]}
-                                             //    {"n", ipuRow > 0 ? in[tile-NumTilesInIpuCol][blockSizePerTile-1] : } // need to feed in n,s,w,e etc.
+                                             {"in",  block(in, 0, 0)},
+                                             {"out", block(out, 0, 0)},
+                                             {"n",   n(in)},
+                                             {"s",   s(in)},
+                                             {"e",   e(in)},
+                                             {"w",   w(in)},
+                                             {"nw",  nw(in)},
+                                             {"ne",  ne(in)},
+                                             {"sw",  sw(in)},
+                                             {"se",  se(in)}
                                      }
+            );
+            graph.setCycleEstimate(v, 9);
+            graph.setTileMapping(v, tile);
+            v = graph.addVertex(compute2,
+                                "ExtraHalosApproach<float>",
+                                {
+                                        {"in",  block(out, 0, 0)},
+                                        {"out", block(in, 0, 0)},
+                                        {"n",   n(out)},
+                                        {"s",   s(out)},
+                                        {"e",   e(out)},
+                                        {"w",   w(out)},
+                                        {"nw",  nw(out)},
+                                        {"ne",  ne(out)},
+                                        {"sw",  sw(out)},
+                                        {"se",  se(out)}
+                                }
             );
             graph.setCycleEstimate(v, 9);
             graph.setTileMapping(v, tile);
@@ -83,7 +169,7 @@ auto implicitStrategy(Graph &graph, vector<Program> &vector, const unsigned numT
 
 }
 
-auto explicitManyTensorStrategy(Graph &graph, vector<Program> &vector, const unsigned numTiles,
+auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
                                 const unsigned blockSizePerTile, const unsigned numIters) -> std::vector<Program> {
     const auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
@@ -130,7 +216,6 @@ auto explicitManyTensorStrategy(Graph &graph, vector<Program> &vector, const uns
     auto stencilProgram = [&]() -> Sequence {
         ComputeSet compute1 = graph.addComputeSet("explicitCompute1");
         ComputeSet compute2 = graph.addComputeSet("explicitCompute2");
-        const auto numTiles = NumTiles;// graph.getTarget().getNumTiles();
         auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
         const auto haloExchangeFn = [&](std::vector<Tensor> &t) -> Sequence {
@@ -198,7 +283,7 @@ auto explicitManyTensorStrategy(Graph &graph, vector<Program> &vector, const uns
 
 }
 
-auto explicitOneTensorStrategy(Graph &graph, vector<Program> &vector, const unsigned numTiles,
+auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
                                const unsigned blockSizePerTile, const unsigned numIters) -> std::vector<Program> {
     const auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
@@ -248,7 +333,6 @@ auto explicitOneTensorStrategy(Graph &graph, vector<Program> &vector, const unsi
     auto stencilProgram = [&]() -> Sequence {
         ComputeSet compute1 = graph.addComputeSet("explicitCompute1");
         ComputeSet compute2 = graph.addComputeSet("explicitCompute2");
-        const auto numTiles = NumTiles;// graph.getTarget().getNumTiles();
         auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
         const auto haloExchangeFn = [&](Tensor &t) -> Sequence {
@@ -261,7 +345,7 @@ auto explicitOneTensorStrategy(Graph &graph, vector<Program> &vector, const unsi
                 const auto topHaloRow = ipuRow * (blockSizePerTile + 2);
                 const auto bottomHaloRow = topHaloRow + blockSizePerTile + 1;
                 const auto leftHaloCol = ipuCol * (blockSizePerTile + 2);
-                const auto rightHaloCol = leftHaloCol+blockSizePerTile + 1;
+                const auto rightHaloCol = leftHaloCol + blockSizePerTile + 1;
 
 
                 // copy my top row upwards (minus first 2 elems)
@@ -302,7 +386,7 @@ auto explicitOneTensorStrategy(Graph &graph, vector<Program> &vector, const unsi
             const auto topHaloRow = ipuRow * (blockSizePerTile + 2);
             const auto bottomHaloRow = topHaloRow + blockSizePerTile + 1;
             const auto leftHaloCol = ipuCol * (blockSizePerTile + 2);
-            const auto rightHaloCol = leftHaloCol+blockSizePerTile + 1;
+            const auto rightHaloCol = leftHaloCol + blockSizePerTile + 1;
 
             const auto block = [&](const Tensor &t) -> Tensor {
                 return t.slice({topHaloRow, leftHaloCol}, {bottomHaloRow + 1, rightHaloCol + 1});
@@ -379,10 +463,19 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    auto graph = poplar::Graph(*device);
+    const auto numTiles = graph.getTarget().getNumTiles();;
+    std::cout << "Using " << numIpus << " IPUs for " << blockSizePerTile << "x" << blockSizePerTile << " blocks on each of "
+              << numTiles
+              << " tiles, running for " << numIters << " iterations. ("
+              << (blockSizePerTile * blockSizePerTile * 4 * numTiles * 2.f) / 1024.f / 1024.f
+              << "MB min memory required)" <<
+              std::endl;
+
     std::cout << "Building graph";
     auto tic = std::chrono::high_resolution_clock::now();
-    auto graph = poplar::Graph(*device);
-    const auto numTiles = NumTiles;//graph.getTarget().getNumTiles();;
+
+
     auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
     assert(NumTilesInIpuCol * NumTilesInIpuRow == numTiles);
 
@@ -392,11 +485,11 @@ int main(int argc, char *argv[]) {
 
     auto programs = std::vector<Program>{};
     if (strategy == "implicit") {
-        programs = implicitStrategy(graph, programs, numTiles, blockSizePerTile, numIters);
+        programs = implicitStrategy(graph, numTiles, blockSizePerTile, numIters);
     } else if (strategy == "explicitManyTensors") {
-        programs = explicitManyTensorStrategy(graph, programs, numTiles, blockSizePerTile, numIters);
+        programs = explicitManyTensorStrategy(graph, numTiles, blockSizePerTile, numIters);
     } else if (strategy == "explicitOneTensor") {
-        programs = explicitOneTensorStrategy(graph, programs, numTiles, blockSizePerTile, numIters);
+        programs = explicitOneTensorStrategy(graph, numTiles, blockSizePerTile, numIters);
     } else {
         return EXIT_FAILURE;
     }

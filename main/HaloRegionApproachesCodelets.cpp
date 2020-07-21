@@ -76,34 +76,93 @@ public:
             const auto ny = in.size();
 
             // top left
-            out[0][0] = stencil(*nw, n[0], n[1], w[0], in[0][0], in[0][1], w[1], in[1][0], in[1][1]);
+            {
+                constexpr auto x = 0u;
+                constexpr auto y = 0u;
+                out[y][x] = stencil(*nw, n[x], n[x + 1],
+                                    w[y], in[y][x], in[y][x + 1],
+                                    w[y + 1], in[y + 1][x], in[y + 1][x + 1]);
+            }
 
             // top
-            for (auto x = 1u; x < in[0].size() - 1; x++) {
-                out[0][x] =
-                        (n[x - 1], n[x], n[x + 1], in[0][x - 1], in[0][x], in[0][x + 1], in[1][x - 1], in[1][x],
-                                in[1][x + 1]);
+            {
+                constexpr auto y = 0u;
+                for (auto x = 1u; x < in[0].size() - 1; x++) {
+                    out[y][x] = stencil(n[x - 1], n[x], n[x + 1],
+                                        in[y][x - 1], in[y][x], in[y][x + 1],
+                                        in[y + 1][x - 1], in[y + 1][x], in[y + 1][x + 1]);
+                }
             }
 
             // top right
-            out[0][nx - 1] =
-                    (n[nx - 2], n[nx - 1], *ne, in[0][nx - 2], in[0][nx - 1], e[0], in[1][nx - 2], in[1][nx - 1],
-                            e[1]);
+            {
+                const auto x = nx - 1u;
+                constexpr auto y = 0u;
+                out[y][x] =
+                        stencil(n[x - 1], n[x], *ne,
+                                in[y][x - 1], in[y][x], e[y],
+                                in[y + 1][x - 1], in[y + 1][x], e[y + 1]);
+            }
 
 
             // left col
-//            for (y = 1; y < ny - 1; y++) {
-//                out[y][0] = w[y - 1] + in[y - 1][0] + in[y - 1][1] +
-//            }
+            {
+                constexpr auto x = 0u;
+                for (auto y = 1; y < ny - 1; y++) {
+                    out[y][x] = stencil(w[y - 1], in[y - 1][x], in[y - 1][x + 1],
+                                        w[y], in[y][x], in[y][x + 1],
+                                        w[y + 1], in[y + 1][x], in[y + 1][x + 1]);
+                }
+            }
+
             // middle block
+            for (auto y = 1; y < ny - 1; y++) {
+                for (auto x = 1; x < nx - 1; x++) {
+                    out[y][x] = stencil(in[y - 1][x - 1], in[y - 1][x], in[y - 1][x + 1],
+                                        in[y][x - 1], in[y][x], in[y][x + 1],
+                                        in[y + 1][x - 1], in[y + 1][x], in[y + 1][x + 1]);
+                }
+            }
 
             // right col
+            {
+                const auto x = nx - 1u;
+                for (auto y = 1; y < ny - 1u; y++) {
+                    out[y][x] = stencil(in[y - 1][x - 1], in[y - 1][x], e[y - 1],
+                                        in[y][x - 1], in[y][x], e[y],
+                                        in[y + 1][x - 1], in[y + 1][x], e[y + 1]);
+                }
+            }
 
             // bottom left
+            {
+                const auto y = ny - 1;
+                constexpr auto x = 0u;
+
+                out[y][x] = stencil(w[y - 1], in[y - 1][x], in[y - 1][x + 1],
+                                    w[y], in[y][x], in[y][x + 1],
+                                    *se, s[x], s[x + 1]);
+            }
 
             // bottom
+            {
+                const auto y = ny - 1;
+                for (auto x = 1u; x < nx - 1u; x++) {
+                    out[y][x] = stencil(in[y - 1][x - 1], in[y - 1][x], in[y - 1][x + 1],
+                                        in[y][x - 1], in[y][x], in[y][x + 1],
+                                        s[x - 1], s[x], s[x + 1]);
+                }
+            }
 
             // bottom right
+            {
+                const auto y = ny - 1;
+                const auto x = nx - 1;
+
+                out[y][x] = stencil(in[y - 1][x - 1], in[y - 1][x], e[y - 1],
+                                    in[y][x - 1], in[y][x], e[y],
+                                    s[x - 1], s[x], *se);
+            }
             return true;
         }
         return false;
