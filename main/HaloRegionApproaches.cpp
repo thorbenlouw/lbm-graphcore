@@ -52,7 +52,7 @@ auto implicitStrategy(Graph &graph, const unsigned numTiles,
         };
         graph.setTileMapping(block(in), tile);
         graph.setTileMapping(block(out), tile);
-        fill(graph, block(in), (float) tile, tile, initCs);
+        fill(graph, block(in), (float) tile + 1, tile, initCs);
     }
 
     auto stencilProgram = [&]() -> Program {
@@ -164,9 +164,7 @@ auto implicitStrategy(Graph &graph, const unsigned numTiles,
         return Sequence(Execute(compute1), Execute(compute2));
     };
 
-
     return {Execute(initCs), Repeat{numIters, stencilProgram()}};
-
 }
 
 auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
@@ -191,23 +189,34 @@ auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
                                                             "in" + std::to_string(tile));
         graph.setTileMapping(blocksForIncludedHalosIn[tile], tile);
         graph.setTileMapping(blocksForIncludedHalosOut[tile], tile);
-        fill(graph, blocksForIncludedHalosIn[tile], (float) tile, tile, initialiseCs);
-        fill(graph, blocksForIncludedHalosOut[tile], (float) tile, tile, initialiseCs);
+        fill(graph, blocksForIncludedHalosIn[tile].slice({1, 1}, {blockSizePerTile + 1, blockSizePerTile + 1}),
+             (float) tile + 1, tile, initialiseCs);
+        fill(graph, blocksForIncludedHalosOut[tile].slice({1, 1}, {blockSizePerTile + 1, blockSizePerTile + 1}),
+             (float) tile + 1, tile, initialiseCs);
         //  zero out the tlbr grids' halos appropriately
         if (ipuRow == 0) {
             popops::zero(graph, blocksForIncludedHalosIn[tile][0], initialiseProgram, "zeroTopHaloEdge");
+            popops::zero(graph, blocksForIncludedHalosOut[tile][0], initialiseProgram, "zeroTopHaloEdge");
         }
         if (ipuRow == NumTilesInIpuRow - 1) {
             popops::zero(graph, blocksForIncludedHalosIn[tile][blockSizePerTile + 1], initialiseProgram,
+                         "zeroBottomEdge");
+            popops::zero(graph, blocksForIncludedHalosOut[tile][blockSizePerTile + 1], initialiseProgram,
                          "zeroBottomEdge");
         }
         if (ipuCol == 0) {
             popops::zero(graph, blocksForIncludedHalosIn[tile].slice({0, 0}, {blockSizePerTile + 2, 1}),
                          initialiseProgram,
                          "zeroLeftHaloEdge");
+            popops::zero(graph, blocksForIncludedHalosOut[tile].slice({0, 0}, {blockSizePerTile + 2, 1}),
+                         initialiseProgram,
+                         "zeroLeftHaloEdge");
         }
         if (ipuCol == NumTilesInIpuCol - 1) {
             popops::zero(graph, blocksForIncludedHalosIn[tile].slice({0, blockSizePerTile + 1},
+                                                                     {blockSizePerTile + 2, blockSizePerTile + 2}),
+                         initialiseProgram, "zeroRightHaloEdge");
+            popops::zero(graph, blocksForIncludedHalosOut[tile].slice({0, blockSizePerTile + 1},
                                                                      {blockSizePerTile + 2, blockSizePerTile + 2}),
                          initialiseProgram, "zeroRightHaloEdge");
         }
@@ -219,37 +228,97 @@ auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
         auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
         const auto haloExchangeFn = [&](std::vector<Tensor> &t) -> Sequence {
-            auto northSouthWave = Sequence{};
-            auto leftRightWave = Sequence{};
+            auto s = Sequence{};
             for (auto tile = 0u; tile < numTiles; tile++) {
-                auto ipuRow = tile / NumTilesInIpuCol;
-                auto ipuCol = tile % NumTilesInIpuCol;
-                // copy my top row upwards (minus first 2 elems)
+                const auto ipuRow = tile / NumTilesInIpuCol;
+                const auto ipuCol = tile % NumTilesInIpuCol;
+
+                const auto ghostRegionWidth = (blockSizePerTile + 2);
+                const auto ghostRegionHeight = (blockSizePerTile + 2);
+
+                const auto ghostTopRow = 0;
+                const auto ghostBottomRow = ghostRegionHeight - 1;
+                const auto ghostLeftCol = 0;
+                const auto ghostRightCol = ghostRegionWidth - 1;
+
+                const auto northTile = tile - ipuCol;
+                const auto southTile = tile + ipuCol;
+                const auto eastTile = tile + 1;
+                const auto westTile = tile - 1;
+                const auto northWestTile = northTile - 1;
+                const auto southWestTile = southTile - 1;
+                const auto northEastTile = northTile + 1;
+                const auto southEastTile = southTile + 1;
+
+                const auto borderBottomRow = ghostBottomRow - 1;
+                const auto borderLeftCol = ghostLeftCol + 1;
+                const auto borderTopRow = ghostTopRow + 1;
+                const auto borderRightCol = ghostRightCol - 1;
+
+
+                // copy my north neighbour's bottom border to my top ghost
                 if (ipuRow > 0) {
-                    northSouthWave.add(Copy(t[tile][1].slice(2, blockSizePerTile + 2),
-                                            t[tile - NumTilesInIpuCol][blockSizePerTile + 1].slice(2, blockSizePerTile +
-                                                                                                      2)));
+                    s.add(
+                            Copy(t[northTile].slice({borderBottomRow, borderLeftCol},
+                                                    {borderBottomRow + 1,
+                                                     borderRightCol + 1}),
+                                 t[tile].slice({ghostTopRow, ghostLeftCol + 1}, {ghostTopRow + 1, ghostRightCol})));
+
+                    // copy my northEast neighbour's bottom left cell to my top right ghost cell
+                    if (ipuCol < NumTilesInIpuCol - 1) {
+                        s.add(Copy(t[northEastTile][borderBottomRow][borderLeftCol],
+                                   t[tile][ghostTopRow][ghostRightCol]));
+                    }
+
+                    // copy my northWest neighbour's bottom right cell to my top left ghost cell
+                    if (ipuCol > 0) {
+                        s.add(Copy(t[northWestTile][borderBottomRow][borderRightCol],
+                                   t[tile][ghostTopRow][ghostLeftCol]));
+                    }
+
+
                 }
-                // copy my bottom row downwards (minus first 2 elems)
+                // copy my south neighbour's top border to my bottom ghost
                 if (ipuRow < NumTilesInIpuRow - 1) {
-                    northSouthWave.add(Copy(t[tile][blockSizePerTile].slice(2, blockSizePerTile + 2),
-                                            t[tile + NumTilesInIpuCol][0].slice(2, blockSizePerTile + 2)));
+                    s.add(
+                            Copy(t[southTile].slice({borderTopRow, borderLeftCol},
+                                                    {borderTopRow + 1,
+                                                     borderRightCol + 1}),
+                                 t[tile].slice({ghostBottomRow, ghostLeftCol + 1},
+                                               {ghostBottomRow + 1, ghostRightCol})));
+
+                    // copy my southEast neighbour's top left cell to my bottom right ghost cell
+                    if (ipuCol < NumTilesInIpuCol - 1) {
+                        s.add(Copy(t[southEastTile][borderTopRow][borderLeftCol],
+                                   t[tile][ghostBottomRow][ghostRightCol]));
+                    }
+
+                    // copy my southWest neighbour's top right cell to my bottom left ghost cell
+                    if (ipuCol > 0) {
+                        s.add(Copy(t[southWestTile][borderTopRow][borderRightCol],
+                                   t[tile][ghostBottomRow][ghostLeftCol]));
+                    }
                 }
 
-                // copy my right row rightwards (including all elems)
+//                 copy my east neighbour's left border to my right ghost
                 if (ipuCol < NumTilesInIpuCol - 1) {
-                    leftRightWave.add(
-                            Copy(t[tile].slice({0, blockSizePerTile}, {blockSizePerTile + 2, blockSizePerTile + 1}),
-                                 t[tile + 1].slice({0, 0}, {blockSizePerTile + 2, 1})));
+                    s.add(
+                            Copy(t[eastTile].slice({borderTopRow, borderLeftCol},
+                                                   {borderBottomRow + 1,
+                                                    borderLeftCol + 1}),
+                                 t[tile].slice({ghostTopRow + 1, ghostRightCol}, {ghostBottomRow, ghostRightCol + 1})));
                 }
-                // copy my left row leftwards (including all elems)
+                // copy my west neighbour's right border to my left ghost region
                 if (ipuCol > 0) {
-                    leftRightWave.add(Copy(t[tile].slice({0, 0}, {blockSizePerTile + 2, 1}),
-                                           t[tile - 1].slice({0, blockSizePerTile + 1},
-                                                             {blockSizePerTile + 2, blockSizePerTile + 2})));
+                    s.add(
+                            Copy(t[westTile].slice({borderTopRow, borderRightCol},
+                                                   {borderBottomRow + 1,
+                                                    borderRightCol + 1}),
+                                 t[tile].slice({ghostTopRow + 1, ghostLeftCol}, {ghostBottomRow, ghostLeftCol + 1})));
                 }
+
             }
-            return Sequence(northSouthWave, leftRightWave);
+            return s;
         };
 
         auto haloExchange1 = haloExchangeFn(blocksForIncludedHalosIn);
@@ -279,9 +348,180 @@ auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
 
         return Sequence(haloExchange1, Execute(compute1), haloExchange2, Execute(compute2));
     };
-    return {Sequence{initialiseProgram, Execute(initialiseCs)}, Repeat{numIters, stencilProgram()}};
+    Sequence printTensors;
+    for (auto i = 0u; i < numTiles; i++) {
+        printTensors.add(PrintTensor(blocksForIncludedHalosIn[i]));
+    }
+    for (auto i = 0u; i < numTiles; i++) {
+        printTensors.add(PrintTensor(blocksForIncludedHalosOut[i]));
+    }
+    return {Sequence{initialiseProgram, Execute(initialiseCs)},
+            Repeat{numIters, stencilProgram()}};
 
 }
+
+auto explicitOneTensorStrategy2Wave(Graph &graph, const unsigned numTiles,
+                                    const unsigned blockSizePerTile, const unsigned numIters) -> std::vector<Program> {
+    const auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
+
+    auto expandedIn = graph.addVariable(FLOAT,
+                                        {NumTilesInIpuRow * (blockSizePerTile + 2),
+                                         NumTilesInIpuCol * (blockSizePerTile + 2)},
+                                        "expandedIn");
+    auto expandedOut = graph.addVariable(FLOAT,
+                                         {NumTilesInIpuRow * (blockSizePerTile + 2),
+                                          NumTilesInIpuCol * (blockSizePerTile + 2)},
+                                         "expandedOut");
+
+
+    auto initialiseProgram = Sequence{};
+    auto initialiseCs = graph.addComputeSet("init");
+
+    for (auto tile = 0u; tile < numTiles; tile++) {
+        auto ipuRow = tile / NumTilesInIpuCol;
+        auto ipuCol = tile % NumTilesInIpuCol;
+
+        const auto blockWithHalo = [&](const Tensor &t) -> Tensor {
+            const auto startRow = ipuRow * (blockSizePerTile + 2);
+            const auto startCol = ipuCol * (blockSizePerTile + 2);
+            return t.slice({startRow, startCol},
+                           {startRow + blockSizePerTile + 2, startCol + blockSizePerTile + 2});
+        };
+        graph.setTileMapping(blockWithHalo(expandedIn), tile);
+        graph.setTileMapping(blockWithHalo(expandedOut), tile);
+
+    }
+    popops::zero(graph, expandedIn, initialiseProgram);
+    popops::zero(graph, expandedOut, initialiseProgram);
+
+    for (auto tile = 0u; tile < numTiles; tile++) {
+        auto ipuRow = tile / NumTilesInIpuCol;
+        auto ipuCol = tile % NumTilesInIpuCol;
+
+        const auto block = [&](const Tensor &t) -> Tensor {
+            const auto startRow = ipuRow * (blockSizePerTile + 2) + 1;
+            const auto startCol = ipuCol * (blockSizePerTile + 2) + 1;
+            return t.slice({startRow, startCol}, {startRow + blockSizePerTile, startCol + blockSizePerTile});
+        };
+        fill(graph, block(expandedIn), (float) tile + 1, tile, initialiseCs);
+        fill(graph, block(expandedOut), (float) tile + 1, tile, initialiseCs);
+    }
+
+    auto stencilProgram = [&]() -> Sequence {
+        ComputeSet compute1 = graph.addComputeSet("explicitCompute1");
+        ComputeSet compute2 = graph.addComputeSet("explicitCompute2");
+        auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
+
+        const auto haloExchangeFn = [&](Tensor &t) -> Sequence {
+            auto northSouthWave = Sequence{};
+            auto eastWestWave = Sequence{};
+            for (auto tile = 0u; tile < numTiles; tile++) {
+                auto ipuRow = tile / NumTilesInIpuCol;
+                auto ipuCol = tile % NumTilesInIpuCol;
+
+                const auto borderWidth = blockSizePerTile;
+                const auto borderHeight = blockSizePerTile;
+                const auto ghostRegionWidth = (blockSizePerTile + 2);
+                const auto ghostRegionHeight = (blockSizePerTile + 2);
+
+                const auto myGhostTopRow = ipuRow * ghostRegionHeight;
+                const auto myGhostBottomRow = myGhostTopRow + ghostRegionHeight - 1;
+                const auto myGhostLeftCol = ipuCol * ghostRegionWidth;
+                const auto myGhostRightCol = myGhostLeftCol + ghostRegionWidth - 1;
+
+                const auto northNeighbourBorderBottomRow = myGhostTopRow - 2;
+                const auto northNeighbourBorderLeftCol = myGhostLeftCol + 1;
+                const auto southNeighbourBorderTopRow = myGhostBottomRow + 2;
+                const auto southNeighbourBorderLeftCol = northNeighbourBorderLeftCol;
+                const auto westNeighbourBorderRightCol = myGhostLeftCol - 2;
+                const auto westNeighbourBorderTopRow = myGhostTopRow + 1;
+                const auto eastNeighbourBorderTopRow = myGhostTopRow + 1;
+                const auto eastNeighbourBorderLeftCol = myGhostRightCol + 2;
+
+
+                // copy my north neighbour's bottom border (+ one more cell) to my top ghost ( less left cell)
+                if (ipuRow > 0) {
+                    northSouthWave.add(
+                            Copy(t.slice({northNeighbourBorderBottomRow, northNeighbourBorderLeftCol},
+                                         {northNeighbourBorderBottomRow + 1,
+                                          northNeighbourBorderLeftCol + borderWidth + 1}),
+                                 t.slice({myGhostTopRow, myGhostLeftCol + 1},
+                                         {myGhostTopRow + 1, myGhostRightCol + 1})));
+                }
+                // copy my south neighbour's top border (+ one more cell)  to my bottom ghost ( less left cell)
+                if (ipuRow < NumTilesInIpuRow - 1) {
+                    northSouthWave.add(
+                            Copy(t.slice({southNeighbourBorderTopRow, southNeighbourBorderLeftCol},
+                                         {southNeighbourBorderTopRow + 1,
+                                          southNeighbourBorderLeftCol + borderWidth + 1}),
+                                 t.slice({myGhostBottomRow, myGhostLeftCol + 1},
+                                         {myGhostBottomRow + 1, myGhostRightCol + 1})));
+                }
+
+                // copy my east neighbour's left border + one cell to top and bottom to my right ghost
+                if (ipuCol < NumTilesInIpuCol - 1) {
+                    eastWestWave.add(
+                            Copy(t.slice({eastNeighbourBorderTopRow - 1, eastNeighbourBorderLeftCol},
+                                         {eastNeighbourBorderTopRow + borderHeight + 1,
+                                          eastNeighbourBorderLeftCol + 1}),
+                                 t.slice({myGhostTopRow, myGhostRightCol},
+                                         {myGhostBottomRow + 1, myGhostRightCol + 1})));
+                }
+                // copy my west neighbour's right   border + one cell to top and bottom to my left ghost region
+                if (ipuCol > 0) {
+                    eastWestWave.add(Copy(t.slice({westNeighbourBorderTopRow - 1, westNeighbourBorderRightCol},
+                                                  {westNeighbourBorderTopRow + borderHeight + 1,
+                                                   westNeighbourBorderRightCol + 1}),
+                                          t.slice({myGhostTopRow, myGhostLeftCol},
+                                                  {myGhostBottomRow + 1, myGhostLeftCol + 1})));
+                }
+            }
+            return Sequence(northSouthWave, eastWestWave);
+        };
+
+        auto haloExchange1 = haloExchangeFn(expandedIn);
+        auto haloExchange2 = haloExchangeFn(expandedOut);
+
+        for (auto tile = 0u; tile < numTiles; tile++) {
+            auto ipuRow = tile / NumTilesInIpuCol;
+            auto ipuCol = tile % NumTilesInIpuCol;
+
+            const auto topHaloRow = ipuRow * (blockSizePerTile + 2);
+            const auto bottomHaloRow = topHaloRow + blockSizePerTile + 1;
+            const auto leftHaloCol = ipuCol * (blockSizePerTile + 2);
+            const auto rightHaloCol = leftHaloCol + blockSizePerTile + 1;
+
+            const auto block = [&](const Tensor &t) -> Tensor {
+                return t.slice({topHaloRow, leftHaloCol}, {bottomHaloRow + 1, rightHaloCol + 1});
+            };
+            auto v = graph.addVertex(compute1,
+                                     "IncludedHalosApproach<float>",
+                                     {
+                                             {"in",  block(expandedIn)},
+                                             {"out", block(expandedOut)},
+                                     }
+            );
+            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setTileMapping(v, tile);
+            v = graph.addVertex(compute2,
+                                "IncludedHalosApproach<float>",
+                                {
+                                        {"out", block(expandedIn)},
+                                        {"in",  block(expandedOut)},
+                                }
+            );
+            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setTileMapping(v, tile);
+        }
+
+
+        return Sequence(haloExchange1, Execute(compute1), haloExchange2, Execute(compute2));
+    };
+    return {Sequence{initialiseProgram, Execute(initialiseCs)},
+            Repeat{numIters, stencilProgram()}
+    };
+}
+
 
 auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
                                const unsigned blockSizePerTile, const unsigned numIters) -> std::vector<Program> {
@@ -326,8 +566,8 @@ auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
             const auto startCol = ipuCol * (blockSizePerTile + 2) + 1;
             return t.slice({startRow, startCol}, {startRow + blockSizePerTile, startCol + blockSizePerTile});
         };
-        fill(graph, block(expandedIn), (float) tile, tile, initialiseCs);
-        fill(graph, block(expandedOut), (float) tile, tile, initialiseCs);
+        fill(graph, block(expandedIn), (float) tile + 1, tile, initialiseCs);
+        fill(graph, block(expandedOut), (float) tile + 1, tile, initialiseCs);
     }
 
     auto stencilProgram = [&]() -> Sequence {
@@ -336,44 +576,98 @@ auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
         auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
         const auto haloExchangeFn = [&](Tensor &t) -> Sequence {
-            auto northSouthWave = Sequence{};
-            auto leftRightWave = Sequence{};
+            auto s = Sequence{};
             for (auto tile = 0u; tile < numTiles; tile++) {
-                auto ipuRow = tile / NumTilesInIpuCol;
-                auto ipuCol = tile % NumTilesInIpuCol;
+                const auto ipuRow = tile / NumTilesInIpuCol;
+                const auto ipuCol = tile % NumTilesInIpuCol;
 
-                const auto topHaloRow = ipuRow * (blockSizePerTile + 2);
-                const auto bottomHaloRow = topHaloRow + blockSizePerTile + 1;
-                const auto leftHaloCol = ipuCol * (blockSizePerTile + 2);
-                const auto rightHaloCol = leftHaloCol + blockSizePerTile + 1;
+                const auto borderWidth = blockSizePerTile;
+                const auto borderHeight = blockSizePerTile;
+                const auto ghostRegionWidth = (blockSizePerTile + 2);
+                const auto ghostRegionHeight = (blockSizePerTile + 2);
 
+                const auto myGhostTopRow = ipuRow * ghostRegionHeight;
+                const auto myGhostBottomRow = myGhostTopRow + ghostRegionHeight - 1;
+                const auto myGhostLeftCol = ipuCol * ghostRegionWidth;
+                const auto myGhostRightCol = myGhostLeftCol + ghostRegionWidth - 1;
 
-                // copy my top row upwards (minus first 2 elems)
+                const auto northNeighbourBorderBottomRow = myGhostTopRow - 2;
+                const auto northNeighbourBorderLeftCol = myGhostLeftCol + 1;
+                const auto southNeighbourBorderTopRow = myGhostBottomRow + 2;
+                const auto southNeighbourBorderLeftCol = northNeighbourBorderLeftCol;
+                const auto westNeighbourBorderRightCol = myGhostLeftCol - 2;
+                const auto westNeighbourBorderTopRow = myGhostTopRow + 1;
+                const auto eastNeighbourBorderTopRow = myGhostTopRow + 1;
+                const auto eastNeighbourBorderLeftCol = myGhostRightCol + 2;
+                const auto northWestNeighbourBorderBottomRow = northNeighbourBorderBottomRow;
+                const auto northWestNeighbourBorderRightCol = northNeighbourBorderLeftCol - 2;
+                const auto northEastNeighbourBorderBottomRow = northNeighbourBorderBottomRow;
+                const auto northEastNeighbourBorderLeftCol = northNeighbourBorderLeftCol + ghostRegionWidth;
+                const auto southWestNeighbourBorderTopRow = southNeighbourBorderTopRow;
+                const auto southWestNeighbourBorderRightCol = northWestNeighbourBorderRightCol;
+                const auto southEastNeighbourBorderLeftCol = northEastNeighbourBorderLeftCol;
+                const auto southEastNeighbourBorderTopRow = southNeighbourBorderTopRow;
+
+                // copy my north neighbour's bottom border to my top ghost
                 if (ipuRow > 0) {
-                    northSouthWave.add(
-                            Copy(t.slice({topHaloRow + 1, leftHaloCol + 2}, {topHaloRow + 2, rightHaloCol + 1}),
-                                 t.slice({topHaloRow - 1, leftHaloCol + 2}, {topHaloRow, rightHaloCol + 1})));
+                    s.add(
+                            Copy(t.slice({northNeighbourBorderBottomRow, northNeighbourBorderLeftCol},
+                                         {northNeighbourBorderBottomRow + 1,
+                                          northNeighbourBorderLeftCol + borderWidth}),
+                                 t.slice({myGhostTopRow, myGhostLeftCol + 1}, {myGhostTopRow + 1, myGhostRightCol})));
+
+                    // copy my northEast neighbour's bottom left cell to my top right ghost cell
+                    if (ipuCol < NumTilesInIpuCol - 1) {
+                        s.add(Copy(t[northEastNeighbourBorderBottomRow][northEastNeighbourBorderLeftCol],
+                                   t[myGhostTopRow][myGhostRightCol]));
+                    }
+
+                    // copy my northWest neighbour's bottom right cell to my top left ghost cell
+                    if (ipuCol > 0) {
+                        s.add(Copy(t[northWestNeighbourBorderBottomRow][northWestNeighbourBorderRightCol],
+                                   t[myGhostTopRow][myGhostLeftCol]));
+                    }
+
+
                 }
-                // copy my bottom row downwards (minus first 2 elems)
+                // copy my south neighbour's top border to my bottom ghost
                 if (ipuRow < NumTilesInIpuRow - 1) {
-                    northSouthWave.add(
-                            Copy(t.slice({bottomHaloRow - 1, leftHaloCol + 2}, {bottomHaloRow, rightHaloCol + 1}),
-                                 t.slice({bottomHaloRow + 1, leftHaloCol + 2}, {bottomHaloRow + 2, rightHaloCol + 1})));
+                    s.add(
+                            Copy(t.slice({southNeighbourBorderTopRow, southNeighbourBorderLeftCol},
+                                         {southNeighbourBorderTopRow + 1, southNeighbourBorderLeftCol + borderWidth}),
+                                 t.slice({myGhostBottomRow, myGhostLeftCol + 1},
+                                         {myGhostBottomRow + 1, myGhostRightCol})));
+
+                    // copy my southEast neighbour's top left cell to my bottom right ghost cell
+                    if (ipuCol < NumTilesInIpuCol - 1) {
+                        s.add(Copy(t[southEastNeighbourBorderTopRow][southEastNeighbourBorderLeftCol],
+                                   t[myGhostBottomRow][myGhostRightCol]));
+                    }
+
+                    // copy my southWest neighbour's top right cell to my bottom left ghost cell
+                    if (ipuCol > 0) {
+                        s.add(Copy(t[southWestNeighbourBorderTopRow][southWestNeighbourBorderRightCol],
+                                   t[myGhostBottomRow][myGhostLeftCol]));
+                    }
                 }
 
-                // copy my right row rightwards (including all elems)
+                // copy my east neighbour's left border to my right ghost
                 if (ipuCol < NumTilesInIpuCol - 1) {
-                    leftRightWave.add(
-                            Copy(t.slice({topHaloRow, rightHaloCol - 1}, {bottomHaloRow + 1, rightHaloCol}),
-                                 t.slice({topHaloRow, rightHaloCol + 1}, {bottomHaloRow + 1, rightHaloCol + 2})));
+                    s.add(
+                            Copy(t.slice({eastNeighbourBorderTopRow, eastNeighbourBorderLeftCol},
+                                         {eastNeighbourBorderTopRow + borderHeight, eastNeighbourBorderLeftCol + 1}),
+                                 t.slice({myGhostTopRow + 1, myGhostRightCol},
+                                         {myGhostBottomRow, myGhostRightCol + 1})));
                 }
-                // copy my left row leftwards (including all elems)
+                // copy my west neighbour's right border to my left ghost region
                 if (ipuCol > 0) {
-                    leftRightWave.add(Copy(t.slice({topHaloRow, leftHaloCol + 1}, {bottomHaloRow + 1, leftHaloCol + 2}),
-                                           t.slice({topHaloRow, leftHaloCol - 1}, {bottomHaloRow + 1, leftHaloCol})));
+                    s.add(Copy(t.slice({westNeighbourBorderTopRow, westNeighbourBorderRightCol},
+                                       {westNeighbourBorderTopRow + borderHeight, westNeighbourBorderRightCol + 1}),
+                               t.slice({myGhostTopRow + 1, myGhostLeftCol}, {myGhostBottomRow, myGhostLeftCol + 1})));
                 }
+
             }
-            return Sequence(northSouthWave, leftRightWave);
+            return s;
         };
 
         auto haloExchange1 = haloExchangeFn(expandedIn);
@@ -414,7 +708,9 @@ auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
 
         return Sequence(haloExchange1, Execute(compute1), haloExchange2, Execute(compute2));
     };
-    return {Sequence{initialiseProgram, Execute(initialiseCs)}, Repeat{numIters, stencilProgram()}};
+    return {Sequence{initialiseProgram, Execute(initialiseCs)},
+            Repeat{numIters, stencilProgram()}
+    };
 }
 
 int main(int argc, char *argv[]) {
@@ -429,7 +725,7 @@ int main(int argc, char *argv[]) {
     cxxopts::Options options(argv[0],
                              " - Prints timing for a run of a simple Moore neighbourhood average stencil ");
     options.add_options()
-            ("h,halo-exhange-strategy", "{implicit,explicitManyTensors,explicitOneTensor}",
+            ("h,halo-exhange-strategy", "{implicit,explicitManyTensors,explicitOneTensor,explicitOneTensor2Wave}",
              cxxopts::value<std::string>(strategy)->default_value("implicit"))
             ("n,num-iters", "Number of iterations", cxxopts::value<unsigned>(numIters)->default_value("1"))
             ("b,block-size", "Block size per Tile",
@@ -449,7 +745,8 @@ int main(int argc, char *argv[]) {
             std::cerr << options.help() << std::endl;
             return EXIT_FAILURE;
         }
-        if (!(strategy == "implicit" || strategy == "explicitManyTensors" || strategy == "explicitOneTensor")) {
+        if (!(strategy == "implicit" || strategy == "explicitManyTensors"
+              || strategy == "explicitOneTensor" || strategy == "explicitOneTensor2Wave")) {
             std::cerr << options.help() << std::endl;
             return EXIT_FAILURE;
         }
@@ -464,10 +761,12 @@ int main(int argc, char *argv[]) {
     }
 
     auto graph = poplar::Graph(*device);
-    const auto numTiles = graph.getTarget().getNumTiles();;
-    std::cout << "Using " << numIpus << " IPUs for " << blockSizePerTile << "x" << blockSizePerTile << " blocks on each of "
+    const auto numTiles = 128;// graph.getTarget().getNumTiles();
+
+    std::cout << "Using " << numIpus << " IPUs for " << blockSizePerTile << "x" << blockSizePerTile
+              << " blocks on each of "
               << numTiles
-              << " tiles, running for " << numIters << " iterations. ("
+              << " tiles, running for " << numIters << " iterations using the " << strategy << " strategy" << ". ("
               << (blockSizePerTile * blockSizePerTile * 4 * numTiles * 2.f) / 1024.f / 1024.f
               << "MB min memory required)" <<
               std::endl;
@@ -490,6 +789,8 @@ int main(int argc, char *argv[]) {
         programs = explicitManyTensorStrategy(graph, numTiles, blockSizePerTile, numIters);
     } else if (strategy == "explicitOneTensor") {
         programs = explicitOneTensorStrategy(graph, numTiles, blockSizePerTile, numIters);
+    } else if (strategy == "explicitOneTensor2Wave") {
+        programs = explicitOneTensorStrategy2Wave(graph, numTiles, blockSizePerTile, numIters);
     } else {
         return EXIT_FAILURE;
     }
@@ -547,7 +848,7 @@ int main(int argc, char *argv[]) {
 
         engine.run(0);
 
-        utils::timedStep("Running explicit halo exchange iterations", [&]() -> void {
+        utils::timedStep("Running halo exchange iterations", [&]() -> void {
             engine.run(1);
         });
 
