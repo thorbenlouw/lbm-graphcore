@@ -53,18 +53,18 @@ int main(int argc, char *argv[]) {
 
     cout << inputFilename << " is " << maybeImg->width << "x" << maybeImg->height << " pixels in size." << std::endl;
 
-    alignas(64) auto img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
     alignas(64) auto tmp_img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
-    auto fImageDescr = toPaddedFloatImageChannelsFirst(*maybeImg, img);
+    auto fImage = toChannelsFirst(zeroPad(toFloatImage(*maybeImg)));
+    auto img = fImage.intensities.data();
 
     std::cout << "Running " << numIters << "(x2) iterations of stencil";
     auto tic = std::chrono::high_resolution_clock::now();
 
     for (auto iter = 0u; iter < numIters; iter++) {
         for (auto c = 0u; c < NumChannels; c++) {
-            const auto offset = c * fImageDescr.width * fImageDescr.height;
-            gaussian_blur(&img[offset], &tmp_img[offset], fImageDescr.width, fImageDescr.height);
-            gaussian_blur(&tmp_img[offset], &img[offset], fImageDescr.width, fImageDescr.height);
+            const auto offset = c * fImage.width * fImage.height;
+            gaussian_blur(&img[offset], &tmp_img[offset], fImage.width, fImage.height);
+            gaussian_blur(&tmp_img[offset], &img[offset], fImage.width, fImage.height);
         }
     }
 
@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
     auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
     std::cerr << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
 
-    auto cImg = toUnpaddedCharsImageChannelsFirst(fImageDescr, img);
+    auto cImg = toCharImage(stripPadding(toChannelsLast(fImage)));
 
     if (!savePng(cImg, outputFilename)) {
         return EXIT_FAILURE;

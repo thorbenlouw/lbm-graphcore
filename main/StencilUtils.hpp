@@ -18,7 +18,8 @@ namespace stencil {
         unsigned height;
         unsigned origChanMin[NumChannels]; // Note the original image's min and max values per chan so that we can reconstruct an image with the same brightness
         unsigned origChanMax[NumChannels];
-    } ImageDescriptor;
+        std::vector<float> intensities;
+    } FloatImage;
 
     auto loadPng(const std::string &filename) -> std::optional<Image> {
         auto img = Image{};
@@ -40,13 +41,115 @@ namespace stencil {
         return error == 0;
     }
 
-// buffer should be pre-allocated to the right size
-    auto toPaddedFloatImageChannelsFirst(const Image &image, const std::unique_ptr<float[]> &buffer) -> ImageDescriptor {
-        auto fImg = ImageDescriptor{
-                .width= image.width + 2,
-                .height= image.height + 2,
+    // Assumes a channels-last image
+    auto zeroPad(const FloatImage &imageChannelsLast) -> FloatImage {
+        auto newImage = FloatImage{
+                .width= imageChannelsLast.width + 2,
+                .height= imageChannelsLast.height + 2,
+                .origChanMin = {imageChannelsLast.origChanMin[0], imageChannelsLast.origChanMin[1],
+                                imageChannelsLast.origChanMin[2], imageChannelsLast.origChanMin[3]},
+                .origChanMax = {imageChannelsLast.origChanMax[0], imageChannelsLast.origChanMax[1],
+                                imageChannelsLast.origChanMax[2], imageChannelsLast.origChanMax[3]},
+                .intensities = std::vector<float>(
+                        NumChannels * (imageChannelsLast.height + 2) * (imageChannelsLast.width + 2), 0.f)
+        };
+#pragma omp parallel for  default(none) shared( newImage, imageChannelsLast)  schedule(static, 4) collapse(3)
+        for (auto row = 0u; row < newImage.height; row++) {
+            for (auto col = 0u; col < newImage.width; col++) {
+                for (auto chan = 0u; chan < NumChannels; chan++) {
+                    const auto idx = (row * newImage.width + col) * NumChannels + chan;
+                    if (row == 0 || col == 0 || row == imageChannelsLast.height + 1 ||
+                        col == imageChannelsLast.width + 1) {
+                        newImage.intensities[idx] = 0.f;
+                    } else {
+                        const auto origIdx =
+                                (row - 1) * ((imageChannelsLast.width) * NumChannels) + (col - 1) * NumChannels + chan;
+                        newImage.intensities[idx] = imageChannelsLast.intensities[origIdx];
+                    }
+                }
+            }
+        }
+        return newImage;
+    }
+
+    // Assumes a channels-last image
+    auto stripPadding(const FloatImage &paddedImage) -> FloatImage {
+        auto newImage = FloatImage{
+                .width= paddedImage.width - 2,
+                .height= paddedImage.height - 2,
+                .origChanMin = {paddedImage.origChanMin[0], paddedImage.origChanMin[1],
+                                paddedImage.origChanMin[2], paddedImage.origChanMin[3]},
+                .origChanMax = {paddedImage.origChanMax[0], paddedImage.origChanMax[1],
+                                paddedImage.origChanMax[2], paddedImage.origChanMax[3]},
+                .intensities = std::vector<float>(NumChannels * (paddedImage.height - 2) * (paddedImage.width - 2), 0.f)
+        };
+#pragma omp parallel for  default(none) shared(newImage, paddedImage)  schedule(static, 4) collapse(3)
+        for (auto row = 1u; row < paddedImage.height - 1; row++) {
+            for (auto col = 1u; col < paddedImage.width - 1; col++) {
+                for (auto chan = 0u; chan < NumChannels; chan++) {
+                    const auto idx = (row - 1) * ((newImage.width) * NumChannels) + (col - 1) * NumChannels + chan;
+                    const auto origIdx = row * ((paddedImage.width) * NumChannels) + col * NumChannels + chan;
+                    newImage.intensities[idx] = paddedImage.intensities[origIdx];
+                }
+            }
+        }
+        return newImage;
+    }
+
+    auto toChannelsFirst(const FloatImage &imageChannelsLast) -> FloatImage {
+        auto newImage = FloatImage{
+                .width= imageChannelsLast.width,
+                .height= imageChannelsLast.height,
+                .origChanMin = {imageChannelsLast.origChanMin[0], imageChannelsLast.origChanMin[1],
+                                imageChannelsLast.origChanMin[2], imageChannelsLast.origChanMin[3]},
+                .origChanMax = {imageChannelsLast.origChanMax[0], imageChannelsLast.origChanMax[1],
+                                imageChannelsLast.origChanMax[2], imageChannelsLast.origChanMax[3]},
+                .intensities = std::vector<float>(NumChannels * imageChannelsLast.height * imageChannelsLast.width, 0.f)
+        };
+#pragma omp parallel for  default(none) shared(newImage, imageChannelsLast)  schedule(static, 4) collapse(3)
+        for (auto row = 0u; row < newImage.height; row++) {
+            for (auto col = 1u; col < newImage.width; col++) {
+                for (auto chan = 0u; chan < NumChannels; chan++) {
+                    const auto chanLastIdx = row * (newImage.width * NumChannels) + col * NumChannels + chan;
+                    const auto chanFirstIdx = chan * (newImage.height * newImage.width) + row * newImage.width + col;
+                    newImage.intensities[chanFirstIdx] = imageChannelsLast.intensities[chanLastIdx];
+                }
+            }
+        }
+        return newImage;
+    }
+
+    auto toChannelsLast(const FloatImage &channelsFirst) -> FloatImage {
+        auto newImage = FloatImage{
+                .width= channelsFirst.width,
+                .height= channelsFirst.height,
+                .origChanMin = {channelsFirst.origChanMin[0], channelsFirst.origChanMin[1],
+                                channelsFirst.origChanMin[2], channelsFirst.origChanMin[3]},
+                .origChanMax = {channelsFirst.origChanMax[0], channelsFirst.origChanMax[1],
+                                channelsFirst.origChanMax[2], channelsFirst.origChanMax[3]},
+                .intensities = std::vector<float>(NumChannels * channelsFirst.height * channelsFirst.width, 0.f)
+        };
+#pragma omp parallel for  default(none) shared(newImage, channelsFirst)  schedule(static, 4) collapse(3)
+        for (auto row = 0u; row < newImage.height; row++) {
+            for (auto col = 1u; col < newImage.width; col++) {
+                for (auto chan = 0u; chan < NumChannels; chan++) {
+                    const auto chanLastIdx = row * (newImage.width * NumChannels) + col * NumChannels + chan;
+                    const auto chanFirstIdx = chan * (newImage.height * newImage.width) + row * newImage.width + col;
+                    newImage.intensities[chanLastIdx] = channelsFirst.intensities[chanFirstIdx];
+                }
+            }
+        }
+        return newImage;
+    }
+
+// fills a channel-last float version of the input image, with pixels in the range 0..1 and original image intensity ranges stored
+    auto toFloatImage(const Image &image) -> FloatImage {
+        auto fImg = FloatImage{
+                .width= image.width,
+                .height= image.height,
                 .origChanMin = {0, 0, 0, 0},
                 .origChanMax = {0, 0, 0, 0},
+                .intensities = std::vector<float>(NumChannels * image.height * image.width, 0.f)
         };
         unsigned char max[4] = {0, 0, 0, 0};
         constexpr auto MaxUChar = std::numeric_limits<unsigned char>::max();
@@ -61,40 +164,27 @@ namespace stencil {
         for (auto c = 0u; c < NumChannels; c++) {
             fImg.origChanMin[c] = min[c];
             fImg.origChanMax[c] = max[c];
-            // copy the bytes to the middle
+#pragma omp parallel for default(none) shared(max, min, image, fImg, c)  schedule(static, 4) collapse(2)
             for (auto y = 0u; y < image.height; y++) {
                 for (auto x = 0u; x < image.width; x++) {
-                    const auto cIdx = (y * image.width + x) * NumChannels + c;
-                    const auto fIdx = c * (fImg.width * fImg.height) + (fImg.width * (y + 1)) + (x + 1);
-                    buffer[fIdx] = (max[c] == min[c])
-                                   ? 0.f :
-                                   ((float) image.bytes[cIdx] - (float) min[c]) / ((float) max[c] - (float) min[c]);
+                    const auto idx = (y * image.width + x) * NumChannels + c;
+                    fImg.intensities[idx] = (max[c] == min[c])
+                                            ? 0.f :
+                                            ((float) image.bytes[idx] - (float) min[c]) /
+                                            ((float) max[c] - (float) min[c]);
                 }
-            }
-            //zero out the top and bottom
-            for (auto y = 1u; y < fImg.height - 1; y++) {
-                const auto leftIdx = c * (fImg.width * fImg.height) + (fImg.width * y);
-                const auto rightIdx = leftIdx + fImg.width - 1;
-                buffer[leftIdx] = 0.f;
-                buffer[rightIdx] = 0.f;
-            }
-            //zero out the left and right
-            for (auto x = 0u; x < fImg.width; x++) {
-                const auto topIdx = c * (fImg.width * fImg.height) + x;
-                const auto bottomIdx = c * (fImg.width * fImg.height) + (fImg.width * (fImg.height - 1)) + x;
-                buffer[topIdx] = 0.f;
-                buffer[bottomIdx] = 0.f;
             }
         }
 
         return fImg;
     }
 
-    auto toUnpaddedCharsImageChannelsFirst(const ImageDescriptor &floatImage, const std::unique_ptr<float[]> &buffer) -> Image {
+// Creates a channel-last char version of the input image (assumed channels-last), rescaling the intensity ranges from the given ImageDescriptor
+    auto toCharImage(const FloatImage &floatImage) -> Image {
         auto img = Image{
-                .width= floatImage.width - 2,
-                .height= floatImage.height - 2,
-                .bytes= std::vector<unsigned char>(NumChannels * (floatImage.height - 2) * (floatImage.width - 2), 0)
+                .width= floatImage.width ,
+                .height= floatImage.height ,
+                .bytes= std::vector<unsigned char>(NumChannels * floatImage.height * floatImage.width, 0)
         };
 
         // Find the min and max vals of each channel
@@ -102,29 +192,28 @@ namespace stencil {
         constexpr auto MaxFloat = std::numeric_limits<float>::max();
         float min[4] = {MaxFloat, MaxFloat, MaxFloat, MaxFloat};
 
+#pragma omp parallel for  default(none) shared(max, min, floatImage)  schedule(static, 4) collapse(3)
         for (auto c = 0u; c < NumChannels; c++) {
-            for (auto y = 1u; y < floatImage.height - 1; y++) {
-                for (auto x = 1u; x < floatImage.width - 1; x++) {
+            for (auto y = 0u; y < floatImage.height; y++) {
+                for (auto x = 0u; x < floatImage.width; x++) {
                     const auto idx = c * (floatImage.height * floatImage.width) + y * floatImage.width + x;
-                    min[c] = std::min(min[c], buffer[idx]);
-                    max[c] = std::max(max[c], buffer[idx]);
+                    min[c] = std::min(min[c], floatImage.intensities[idx]);
+                    max[c] = std::max(max[c], floatImage.intensities[idx]);
                 }
             }
         }
+#pragma omp parallel for  default(none) shared(max, min, img, floatImage)  schedule(static, 4) collapse(3)
         for (auto c = 0u; c < NumChannels; c++) {
             for (auto y = 0u; y < img.height; y++) {
                 for (auto x = 0u; x < img.width; x++) {
-                    const auto inIdx =
-                            c * (floatImage.height * floatImage.width) + (y + 1) * floatImage.width + (x + 1);
-                    const auto outIdx = (y * img.width + x) * NumChannels + c;
-
+                    const auto idx = (y * img.width + x) * NumChannels + c;
                     auto rescaled = (max[c] == min[c]) ? 0.f :
-                                    (buffer[inIdx] + min[c]) /
+                                    (floatImage.intensities[idx] + min[c]) /
                                     (max[c] - min[c]); // Now it's in the range 0..1
                     auto inOrigBrightness =
                             (rescaled * (float) (floatImage.origChanMax[c] - floatImage.origChanMin[c])) +
                             (float) floatImage.origChanMin[c];
-                    img.bytes[outIdx] = (unsigned char) inOrigBrightness;
+                    img.bytes[idx] = (unsigned char) inOrigBrightness;
                 }
             }
         }
