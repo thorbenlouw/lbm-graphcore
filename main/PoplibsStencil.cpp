@@ -60,9 +60,9 @@ int main(int argc, char *argv[]) {
 
     cout << inputFilename << " is " << maybeImg->width << "x" << maybeImg->height << " pixels in size." << std::endl;
 
-    auto img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
-    auto tmp_img = std::make_unique<float[]>((maybeImg->width + 2) * (maybeImg->height + 2) * NumChannels);
-    auto fImageDescr = toPaddedFloatImageChannelsFirst(*maybeImg, img);
+    auto tmp_img = std::make_unique<float[]>((maybeImg->width) * (maybeImg->height) * NumChannels);
+    auto fImage = toChannelsFirst(toFloatImage(*maybeImg));
+    auto img = fImage.intensities.data();
 
     auto device = useIpuModel ? utils::getIpuModel(numIpus) : utils::getIpuDevice(numIpus);
 
@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {
             {0, 0},
             {0, 0}};
 
-    auto convParams = ConvParams(FLOAT, FLOAT, 1, {fImageDescr.height, fImageDescr.width},
+    auto convParams = ConvParams(FLOAT, FLOAT, 1, {fImage.height, fImage.width},
                                  {3, 3}, 4, 4, 1,
                                  padInput, transformKernel,
                                  transformOutput);
@@ -122,9 +122,9 @@ int main(int argc, char *argv[]) {
     };
 
     const auto inImg = graph.addHostToDeviceFIFO(">>img", FLOAT,
-                                                 NumChannels * fImageDescr.height * fImageDescr.width);
+                                                 NumChannels * fImage.height * fImage.width);
     const auto outImg = graph.addDeviceToHostFIFO("<<img", FLOAT,
-                                                  NumChannels * fImageDescr.height * fImageDescr.width);
+                                                  NumChannels * fImage.height * fImage.width);
     Sequence stencilProgram;
     auto out = convolution(graph, imgTensor, weights, convParams, false,
                            stencilProgram, "convolution", convOptions
@@ -189,8 +189,8 @@ int main(int argc, char *argv[]) {
                   std::endl;
 
 
-        engine.connectStream(">>img", img.get());
-        engine.connectStream("<<img", img.get());
+        engine.connectStream(">>img", img);
+        engine.connectStream("<<img", img);
 
         engine.load(*device);
 
@@ -214,7 +214,7 @@ int main(int argc, char *argv[]) {
     }
 
 
-    auto cImg = toUnpaddedCharsImageChannelsFirst(fImageDescr, img);
+    auto cImg = toCharImage(toChannelsLast(fImage));
 
     if (!savePng(cImg, outputFilename)) {
         return EXIT_FAILURE;
