@@ -187,7 +187,7 @@ int main(int argc, char *argv[]) {
     auto copyBackToHost = Copy(imgTensor, outImg);
 
     const auto programs = std::vector<Program>{copyToDevice,
-                                               Repeat(1, stencilProgram),
+                                               Repeat(numIters, stencilProgram),
                                                copyBackToHost};
 
 
