@@ -78,7 +78,11 @@ int main(int argc, char *argv[]) {
     auto imgTensor = graph.addVariable(FLOAT, {fImage.height, fImage.width, NumChannels}, "img");
     auto tmpImgTensor = graph.addVariable(FLOAT, {fImage.height, fImage.width, NumChannels}, "tmpImg");
 
-    auto ipuLevelMappings = grids::partitionForIpus({fImage.height, fImage.width}, numIpus, 1400 * 1400);
+    auto ipuLevelMappings = grids::partitionForIpus({fImage.height, fImage.width}, numIpus, 2000 * 1400);
+    if (!ipuLevelMappings.has_value()) {
+        std::cerr << "Couldn't fit the problem on the " << numIpus << " ipus." << std::endl;
+        return EXIT_FAILURE;
+    }
     auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings);
     auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings, 1);
 
@@ -102,20 +106,20 @@ int main(int argc, char *argv[]) {
                                                             Tensor &tensor,
                                                             const unsigned borderSize = 1u) -> Tensor {
             if (maybeSlice.has_value()) {
-                if (borderSize == 1) {
-                    return utils::applySlice(tensor, *maybeSlice)[0]; // scalar!
-                }
+////                if (borderSize == 1) {
+////                    return utils::applySlice(tensor, *maybeSlice)[0]; // scalar!
+////                }
                 return utils::applySlice(tensor, *maybeSlice);
             } else {
-                if (borderSize == 1) { // scalar!
-                    const auto zeroScalar = graph.addConstant(FLOAT, {}, 0.f, "0");
-                    graph.setTileMapping(zeroScalar, _target.virtualTile());
-                    return zeroScalar;
-                } else {
-                    const auto zerosVector = graph.addConstant(FLOAT, {borderSize}, zeros.data(), "{0...}");
+//                if (borderSize == 1) { // scalar!
+//                    const auto zeroScalar = graph.addConstant(FLOAT, {}, 0.f, "0");
+//                    graph.setTileMapping(zeroScalar, _target.virtualTile());
+//                    return zeroScalar;
+//                } else {
+                    const auto zerosVector = graph.addConstant(FLOAT, {borderSize*4}, zeros.data(), "{0...}");
                     graph.setTileMapping(zerosVector, _target.virtualTile());
                     return zerosVector;
-                }
+//                }
             }
         };
 
@@ -183,7 +187,7 @@ int main(int argc, char *argv[]) {
     auto copyBackToHost = Copy(imgTensor, outImg);
 
     const auto programs = std::vector<Program>{copyToDevice,
-                                               Repeat(numIters, stencilProgram),
+                                               Repeat(1, stencilProgram),
                                                copyBackToHost};
 
 

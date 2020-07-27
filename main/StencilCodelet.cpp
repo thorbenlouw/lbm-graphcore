@@ -14,6 +14,7 @@ T stencil(const T nw, const T n, const T ne, const T w, const T m,
           const T e, const T sw,
           const T s, const T se) {
     return 1.f / 16 * (nw + ne + sw + se) + 4.f / 16 * m + 2.f / 16 * (e + sw + s + se);
+//    return m;
 }
 
 
@@ -22,7 +23,7 @@ class GaussianBlurCodelet : public Vertex {
 
 public:
     Input <Vector<T>> in;
-    Input <T> nw, ne, sw, se;
+    Input <Vector<T>> nw, ne, sw, se;
     Input <Vector<T>> n, s, w, e;
     Output <Vector<T>> out;
     Input<unsigned> width;
@@ -32,24 +33,35 @@ public:
     bool compute() {
         const auto nx = *width;
         const auto ny = *height;
-        // Only works if this is at least a 3x3 block (excluding halos), and in must be same size as out
+        const auto nc = 4;
+
+//         Only works if this is at least a 3x3 block (excluding halos), and in must be same size as out
         if (nx > 2 && ny > 2) {
             // top left
             {
                 constexpr auto x = 0u;
                 constexpr auto y = 0u;
-                out[y * nx + x] = stencil(*nw, n[x], n[x + 1],
-                                          w[y], in[y * nx + x], in[y * nx + x + 1],
-                                          w[y + 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
+                for (auto c = 0u; c < nc; c++) {
+                    out[c + nc * (y * nx + x)] = stencil(nw[c], n[c + nc * x], n[c + nc * (x + 1)],
+                                                         w[c + nc * y], in[c + nc * (y * nx + x)],
+                                                         in[c + nc * (y * nx + x + 1)],
+                                                         w[c + nc * (y + 1)], in[c + nc * ((y + 1) * nx + x)],
+                                                         in[c + nc * ((y + 1) * nx + x + 1)]);
+                }
             }
 
             // top
             {
                 constexpr auto y = 0u;
                 for (auto x = 1u; x < nx - 1; x++) {
-                    out[y * nx + x] = stencil(n[x - 1], n[x], n[x + 1],
-                                              in[y * nx + x - 1], in[y * nx + x], in[y * nx + x + 1],
-                                              in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
+                    for (auto c = 0; c < 4; c++) {
+                        out[c + nc * (y * nx + x)] = stencil(n[c + nc * (x - 1)], n[c + nc * (x)], n[c + nc * (x + 1)],
+                                                             in[c + nc * (y * nx + x - 1)], in[c + nc * (y * nx + x)],
+                                                             in[c + nc * (y * nx + x + 1)],
+                                                             in[c + nc * ((y + 1) * nx + x - 1)],
+                                                             in[c + nc * ((y + 1) * nx + x)],
+                                                             in[c + nc * ((y + 1) * nx + x + 1)]);
+                    }
                 }
             }
 
@@ -57,10 +69,13 @@ public:
             {
                 const auto x = nx - 1u;
                 constexpr auto y = 0u;
-                out[y * nx + x] =
-                        stencil(n[x - 1], n[x], *ne,
-                                in[y * nx + x - 1], in[y * nx + x], e[y],
-                                in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], e[y + 1]);
+                for (auto c = 0; c < 4; c++) {
+                    out[c + nc * (y * nx + x)] =
+                            stencil(n[c + nc * (x - 1)], n[c + nc * (x)], ne[c],
+                                    in[c + nc * (y * nx + x - 1)], in[c + nc * (y * nx + x)], e[c + nc * y],
+                                    in[c + nc * ((y + 1) * nx + x - 1)], in[c + nc * ((y + 1) * nx + x)],
+                                    e[c + nc * (y + 1)]);
+                }
             }
 
 
@@ -68,18 +83,30 @@ public:
             {
                 constexpr auto x = 0u;
                 for (auto y = 1; y < ny - 1; y++) {
-                    out[y * nx + x] = stencil(w[y - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
-                                              w[y], in[y * nx + x], in[y * nx + x + 1],
-                                              w[y + 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
+                    for (auto c = 0; c < 4; c++) {
+                        out[c + nc * (y * nx + x)] = stencil(w[c + nc * (y - 1)], in[c + nc * ((y - 1) * nx + x)],
+                                                             in[c + nc * ((y - 1) * nx + x + 1)],
+                                                             w[c + nc * y], in[c + nc * (y * nx + x)],
+                                                             in[c + nc * (y * nx + x + 1)],
+                                                             w[c + nc * (y + 1)], in[c + nc * ((y + 1) * nx + x)],
+                                                             in[c + nc * ((y + 1) * nx + x + 1)]);
+                    }
                 }
             }
 
             // middle block
             for (auto y = 1; y < ny - 1; y++) {
                 for (auto x = 1; x < nx - 1; x++) {
-                    out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
-                                              in[y * nx + x - 1], in[y * nx + x], in[y * nx + x + 1],
-                                              in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
+                    for (auto c = 0; c < 4; c++) {
+                        out[c + nc * (y * nx + x)] = stencil(in[c + nc * ((y - 1) * nx + x - 1)],
+                                                             in[c + nc * ((y - 1) * nx + x)],
+                                                             in[c + nc * ((y - 1) * nx + x + 1)],
+                                                             in[c + nc * (y * nx + x - 1)], in[c + nc * (y * nx + x)],
+                                                             in[c + nc * (y * nx + x + 1)],
+                                                             in[c + nc * ((y + 1) * nx + x - 1)],
+                                                             in[c + nc * ((y + 1) * nx + x)],
+                                                             in[c + nc * ((y + 1) * nx + x + 1)]);
+                    }
                 }
             }
 
@@ -87,9 +114,14 @@ public:
             {
                 const auto x = nx - 1u;
                 for (auto y = 1; y < ny - 1u; y++) {
-                    out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], e[y - 1],
-                                              in[y * nx + x - 1], in[y * nx + x], e[y],
-                                              in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], e[y + 1]);
+                    for (auto c = 0; c < 4; c++) {
+                        out[c + nc * (y * nx + x)] = stencil(in[c + nc * ((y - 1) * nx + x - 1)],
+                                                             in[c + nc * ((y - 1) * nx + x)], e[c + nc * (y - 1)],
+                                                             in[c + nc * (y * nx + x - 1)], in[c + nc * (y * nx + x)],
+                                                             e[c + nc * y],
+                                                             in[c + nc * ((y + 1) * nx + x - 1)],
+                                                             in[c + nc * ((y + 1) * nx + x)], e[c + nc * (y + 1)]);
+                    }
                 }
             }
 
@@ -97,19 +129,27 @@ public:
             {
                 const auto y = ny - 1;
                 constexpr auto x = 0u;
-
-                out[y * nx + x] = stencil(w[y - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
-                                          w[y], in[y * nx + x], in[y * nx + x + 1],
-                                          *sw, s[x], s[x + 1]);
+                for (auto c = 0; c < 4; c++) {
+                    out[c + nc * (y * nx + x)] = stencil(w[c + nc * (y - 1)], in[c + nc * ((y - 1) * nx + x)],
+                                                         in[c + nc * ((y - 1) * nx + x + 1)],
+                                                         w[c + nc * y], in[c + nc * (y * nx + x)],
+                                                         in[c + nc * (y * nx + x + 1)],
+                                                         sw[c], s[c + nc * x], s[c + nc * (x + 1)]);
+                }
             }
 
             // bottom
             {
                 const auto y = ny - 1;
                 for (auto x = 1u; x < nx - 1u; x++) {
-                    out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
-                                              in[y * nx + x - 1], in[y * nx + x], in[y * nx + x + 1],
-                                              s[x - 1], s[x], s[x + 1]);
+                    for (auto c = 0; c < 4; c++) {
+                        out[c + nc * (y * nx + x)] = stencil(in[c + nc * ((y - 1) * nx + x - 1)],
+                                                             in[c + nc * ((y - 1) * nx + x)],
+                                                             in[c + nc * ((y - 1) * nx + x + 1)],
+                                                             in[c + nc * (y * nx + x - 1)], in[c + nc * (y * nx + x)],
+                                                             in[c + nc * (y * nx + x + 1)],
+                                                             s[c + nc * (x - 1)], s[c + nc * x], s[c + nc * (x + 1)]);
+                    }
                 }
             }
 
@@ -117,10 +157,11 @@ public:
             {
                 const auto y = ny - 1;
                 const auto x = nx - 1;
-
-                out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], e[y - 1],
-                                          in[y * nx + x - 1], in[y * nx + x], e[y],
-                                          s[x - 1], s[x], *se);
+                for (auto c = 0; c < 4; c++) {
+                    out[c + nc * (y * nx + x)] = stencil(in[c + nc * ((y - 1) * nx + x - 1)], in[c + nc * ((y - 1) * nx + x)], e[c + nc * (y - 1)],
+                                              in[c + nc * (y * nx + x - 1)], in[c + nc * (y * nx + x)], e[c + nc * y],
+                                              s[c + nc * (x - 1)], s[c + nc * x], se[c]);
+                }
             }
             return true;
         }
