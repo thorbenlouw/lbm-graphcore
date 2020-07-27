@@ -83,8 +83,8 @@ int main(int argc, char *argv[]) {
         std::cerr << "Couldn't fit the problem on the " << numIpus << " ipus." << std::endl;
         return EXIT_FAILURE;
     }
-    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings);
-    auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings, 1);
+    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getNumTiles(), 3*6, 3*6);
+    auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings);
 
     for (const auto &[target, slice]: tileLevelMappings) {
         graph.setTileMapping(utils::applySlice(imgTensor, slice), target.virtualTile());
