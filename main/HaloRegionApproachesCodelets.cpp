@@ -141,7 +141,7 @@ public:
 
                 out[y][x] = stencil(w[y - 1], in[y - 1][x], in[y - 1][x + 1],
                                     w[y], in[y][x], in[y][x + 1],
-                                    *se, s[x], s[x + 1]);
+                                    *sw, s[x], s[x + 1]);
             }
 
             // bottom

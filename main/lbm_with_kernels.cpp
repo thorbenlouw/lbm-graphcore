@@ -188,9 +188,6 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     auto cellsSecondRowFromTop = cells.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
     auto obstaclesSecondRowFromTop = obstacles.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
 
-    // For now, let's try the approach of spreading accelerate computation over more tiles, even if that
-    // means redistributing data from cells and obstacles (i.e. keep tiles busy rather than minimise data transfer)
-    // TODO actually just run on the tiles where this stuff is mapped
     const auto ipuLevelMapping = grids::partitionForIpus({1, params.nx}, graph.getTarget().getNumIPUs(), params.nx);
 
     assert(ipuLevelMapping.has_value());

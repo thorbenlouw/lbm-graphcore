@@ -559,7 +559,6 @@ namespace grids {
 
     class Halos {
     public:
-        // IMPORTANT! (0,0) is considered bottom left
         const std::optional<Slice2D> top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight;
 
         Halos() = delete;
@@ -577,7 +576,8 @@ namespace grids {
                 bottomLeft(std::move(bottomLeft)), bottomRight(std::move(bottomRight)) {
         }
 
-        static auto forSlice(Slice2D slice, Size2D matrixSize, bool wraparound = true) -> Halos {
+        // IMPORTANT! (0,0) is considered bottom left unless you set bottomRightIs00 = false
+        static auto forSlice(Slice2D slice, Size2D matrixSize, bool wraparound = true, bool bottomRightIs00= true)  -> Halos {
             // Some shorthand sugar
             const auto x = slice.cols().from();
             const auto y = slice.rows().from();
@@ -640,7 +640,10 @@ namespace grids {
                                     {*b, *b + 1},
                                     {*r, *r + 1}
                             }} : std::nullopt;
-            return Halos(top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight);
+            if (bottomRightIs00)
+                return Halos(top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight);
+            else
+                return Halos(bottom, top, left, right, bottomLeft, bottomRight, topLeft, topRight);
         }
 
     };

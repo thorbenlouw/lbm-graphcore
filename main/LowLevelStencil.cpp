@@ -1,418 +1,272 @@
 
-
 #include <cstdlib>
+#include <cxxopts.hpp>
+#include <lodepng.h>
+#include "StructuredGridUtils.hpp"
+#include <chrono>
+#include "StencilUtils.hpp"
+#include "GraphcoreUtils.hpp"
 #include <poplar/IPUModel.hpp>
-#include <popops/Reduce.hpp>
 #include <popops/codelets.hpp>
-#include <iomanip>
+#include <popops/Zero.hpp>
 #include <iostream>
 #include <poplar/Program.hpp>
-#include <chrono>
-#include <algorithm>
-#include <poputil/Broadcast.hpp>
-#include <random>
+#include <poplar/Engine.hpp>
 
-#include <cxxopts.hpp>
-#include <lodepng.g>
+#include <sstream>
 
-#include "GraphcoreUtils.hpp"
-#include "StructuredGridUtils.hpp"
+using namespace stencil;
 
 
-using namespace poplar;
-using namespace poplar::program;
-using namespace popops;
+int main(int argc, char *argv[]) {
+    std::string inputFilename, outputFilename;
+    unsigned numIters = 1u;
+    unsigned numIpus = 1u;
+    bool compileOnly = false;
+    bool debug = false;
+    bool useIpuModel = false;
 
-using TensorMap = std::map<std::string, Tensor>;
+    cxxopts::Options options(argv[0],
+                             " - Runs a 3x3 Gaussian Blur stencil over an input image a number of times using Poplibs on the IPU");
+    options.add_options()
+            ("n,num-iters", "Number of iterations", cxxopts::value<unsigned>(numIters)->default_value("1"))
+            ("i,image", "filename input image (must be a 4-channel PNG image)",
+             cxxopts::value<std::string>(inputFilename))
+            ("num-ipus", "Number of IPUs to target (1,2,4,8 or 16)", cxxopts::value<unsigned>(numIpus))
+            ("o,output", "filename output (blurred image)", cxxopts::value<std::string>(outputFilename))
+            ("d,debug", "Run in debug mode (capture profiling information)")
+            ("compile-only", "Only compile the graph and write to stencil_<width>x<height>.exe, don't run")
+            ("m,ipu-model", "Run on IPU model (emulator) instead of real device");
 
+    try {
+        auto opts = options.parse(argc, argv);
+        debug = opts["debug"].as<bool>();
+        compileOnly = opts["compile-only"].as<bool>();
+        useIpuModel = opts["ipu-model"].as<bool>();
+        if (opts.count("n") + opts.count("i") + opts.count("num-ipus") + opts.count("o") < 0) {
+            std::cerr << options.help() << std::endl;
+            return EXIT_FAILURE;
+        }
+    } catch (cxxopts::OptionParseException &) {
+        std::cerr << options.help() << std::endl;
+        return EXIT_FAILURE;
+    }
 
-auto applySlice(Tensor &tensor, grids::Slice2D slice) -> Tensor {
-    return
-            tensor.slice(slice.rows().from(), slice.rows().to(), 0)
-                    .slice(slice.cols().from(), slice.cols().to(),
-                           1).flatten();
-};
+    auto maybeImg = loadPng(inputFilename);
+    if (!maybeImg.has_value()) {
+        return EXIT_FAILURE;
+    }
 
-auto
-averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
-                grids::TileMappings &workerLevelMappings) -> Program {
+    cout << inputFilename << " is " << maybeImg->width << "x" << maybeImg->height << " pixels in size." << std::endl;
 
-    // As part of collision we already calculated a partialSum (float) and partialCount (unsigned) for each worker
-    // which represents the summed normedVelocity and count of cells which are not masked by obstacles. Now we reduce them
+    auto tmp_img = std::make_unique<float[]>((maybeImg->width) * (maybeImg->height) * NumChannels);
+    auto fImage = toChannelsFirst(zeroPad(toFloatImage(*maybeImg)));
+    auto img = fImage.intensities.data();
 
-    // Do multiple reductions in parallel
-    std::vector<ComputeSet> reductionComputeSets;
-    popops::reduceWithOutput(graph, tensors["perWorkerPartialCounts"],
-                             tensors["reducedCount"], {0}, {popops::Operation::ADD}, reductionComputeSets,
-                             "reducedCount+=perWorkerPartialCounts[i]");
-    popops::reduceWithOutput(graph, tensors["perWorkerPartialSums"],
-                             tensors["reducedSum"], {0}, {popops::Operation::ADD}, reductionComputeSets,
-                             "reducedSums+=perWorkerPartialCounts[i]");
+    auto device = useIpuModel ? utils::getIpuModel(numIpus) : utils::getIpuDevice(numIpus);
 
-    /* Calculate the average and write it to the relevant place in the array. This happens on every tile,
-     * because each tile owns a piece of cells, and only the owner of the piece with the index actually writes */
+    std::cout << "Building graph";
+    auto tic = std::chrono::high_resolution_clock::now();
+    auto graph = poplar::Graph(*device);
+    graph.addCodelets("StencilCodelet.cpp");
 
-    const auto numIpus = graph.getTarget().getNumIPUs();
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / numIpus;
+    const auto inImg = graph.addHostToDeviceFIFO(">>img", FLOAT,
+                                                 NumChannels * fImage.height * fImage.width);
+    const auto outImg = graph.addDeviceToHostFIFO("<<img", FLOAT,
+                                                  NumChannels * fImage.height * fImage.width);
 
-    auto avVelsTileMapping = grids::partitionGridToTilesForSingleIpu(
-            {params.maxIters, 1},
-            numTilesPerIpu * numIpus
-    );
+    auto imgTensor = graph.addVariable(FLOAT, {fImage.height, fImage.width, NumChannels}, "img");
+    auto tmpImgTensor = graph.addVariable(FLOAT, {fImage.height, fImage.width, NumChannels}, "tmpImg");
 
-    ComputeSet appendResultCs = graph.addComputeSet("appendReducedSum");
-    for (const auto &[target, slice] : avVelsTileMapping) {
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
+    auto ipuLevelMappings = grids::partitionForIpus({fImage.height, fImage.width}, numIpus, 1400 * 1400);
+    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings);
+    auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings, 1);
 
-        auto appendReducedSumVertex = graph.addVertex(
-                appendResultCs,
-                "AppendReducedSum",
-                {
-                        {"total",        tensors["reducedSum"]},
-                        {"count",        tensors["reducedCount"]},
-                        {"indexToWrite", tensors["counter"]},
-                        {"myStartIndex", slice.rows().from()},
-                        {"myEndIndex",   slice.rows().to() - 1},
-                        {"finals",       tensors["av_vel"].slice(
-                                slice.rows().from(),
-                                slice.rows().to(),
-                                0).flatten()},
+    for (const auto &[target, slice]: tileLevelMappings) {
+        graph.setTileMapping(utils::applySlice(imgTensor, slice), target.virtualTile());
+        graph.setTileMapping(utils::applySlice(tmpImgTensor, slice), target.virtualTile());
+    }
+
+    auto inToOut = graph.addComputeSet("inToOut");
+    auto outToIn = graph.addComputeSet("outToIn");
+    auto zeros = std::vector<float>(std::max(fImage.width, fImage.height), 0.f);
+    for (const auto &[target, slice]: workerLevelMappings) {
+        // Halos top-left = (0,0) and no wraparound
+        const auto halos = grids::Halos::forSlice(slice, {fImage.height, fImage.width}, false, false);
+
+        const auto maybeZerosVector = std::optional<Tensor>{};
+        const auto maybeZeroScalar = std::optional<Tensor>{};
+
+        const auto _target = target;
+        const auto applyOrZero = [&graph, &_target, &zeros](const std::optional<grids::Slice2D> maybeSlice,
+                                                            Tensor &tensor,
+                                                            const unsigned borderSize = 1u) -> Tensor {
+            if (maybeSlice.has_value()) {
+                if (borderSize == 1) {
+                    return utils::applySlice(tensor, *maybeSlice)[0]; // scalar!
                 }
-        );
-        graph.setTileMapping(tensors["av_vel"].slice(slice.rows().from(),
-                                                     slice.rows().to(),
-                                                     0), tile);
-        graph.setCycleEstimate(appendReducedSumVertex, 16);
-        graph.setTileMapping(appendReducedSumVertex, tile);
+                return utils::applySlice(tensor, *maybeSlice);
+            } else {
+                if (borderSize == 1) { // scalar!
+                    const auto zeroScalar = graph.addConstant(FLOAT, {}, 0.f, "0");
+                    graph.setTileMapping(zeroScalar, _target.virtualTile());
+                    return zeroScalar;
+                } else {
+                    const auto zerosVector = graph.addConstant(FLOAT, {borderSize}, zeros.data(), "{0...}");
+                    graph.setTileMapping(zerosVector, _target.virtualTile());
+                    return zerosVector;
+                }
+            }
+        };
 
-    }
+        // TODO deal with slices that are only 2 rows thick!
 
-
-    ComputeSet incrementCs = graph.addComputeSet("increment");
-
-    auto incrementVertex = graph.addVertex(incrementCs,
-                                           "IncrementIndex", // Create a vertex of this
-                                           {{"index", tensors["counter"]}   // Connect input 'b' of the
-                                           });
-    graph.setCycleEstimate(incrementVertex, 13);
-    graph.setTileMapping(incrementVertex, 0);
-
-
-    Sequence seq;
-    for (const auto &cs : reductionComputeSets) {
-        seq.add(Execute(cs));
-    }
-    seq.add(Execute(appendResultCs));
-    seq.add(Execute(incrementCs));
-    return std::move(seq);
-}
-
-auto
-collision(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
-    const auto numWorkersPerTile = graph.getTarget().getNumWorkerContexts();
-
-    ComputeSet collisionCs = graph.addComputeSet("collision");
-
-    for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
-        auto numCellsForThisWorker = slice.width() * slice.height();
-
-        auto v = graph.addVertex(collisionCs,
-                                 "CollisionVertex",
+        auto n = applyOrZero(halos.top, imgTensor, slice.width() - 2);
+        auto s = applyOrZero(halos.bottom, imgTensor, slice.width() - 2);
+        auto e = applyOrZero(halos.right, imgTensor, slice.height() - 2);
+        auto w = applyOrZero(halos.left, imgTensor, slice.height() - 2);
+        auto nw = applyOrZero(halos.topLeft, imgTensor);
+        auto ne = applyOrZero(halos.topRight, imgTensor);
+        auto sw = applyOrZero(halos.bottomLeft, imgTensor);
+        auto se = applyOrZero(halos.bottomRight, imgTensor);
+        auto v = graph.addVertex(inToOut,
+                                 "GaussianBlurCodelet<float>",
                                  {
-                                         {"in",                    applySlice(tensors["tmp_cells"], slice)},
-                                         {"out",                   applySlice(tensors["cells"], slice)},
-                                         {"numRows",               slice.height()},
-                                         {"numCols",               slice.width()},
-                                         {"omega",                 params.omega},
-                                         {"obstacles",             applySlice(tensors["obstacles"], slice)},
-                                         {"normedVelocityPartial", tensors["perWorkerPartialSums"][
-                                                                           tile * numWorkersPerTile +
-                                                                           target.worker()]},
-                                         {"countPartial",          tensors["perWorkerPartialCounts"][
-                                                                           tile * numWorkersPerTile +
-                                                                           target.worker()]}
+                                         {"width",  slice.width()},
+                                         {"height", slice.height()},
+                                         {"in",     utils::applySlice(imgTensor, slice)},
+                                         {"out",    utils::applySlice(tmpImgTensor, slice)},
+                                         {"n",      n},
+                                         {"s",      s},
+                                         {"e",      e},
+                                         {"w",      w},
+                                         {"nw",     nw},
+                                         {"sw",     sw},
+                                         {"ne",     ne},
+                                         {"se",     se},
                                  }
         );
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-    }
-
-    return
-            Execute(collisionCs);
-}
-
-auto propagate(Graph &graph,
-               const lbm::Params &params, TensorMap &tensors,
-               grids::TileMappings &mappings) -> Program {
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
-
-    ComputeSet propagateCs = graph.addComputeSet("propagate");
-    auto cells = tensors["cells"];
-
-    auto fullSize = grids::Size2D(params.ny, params.nx);
-    for (const auto &[target, slice] : mappings) {
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
-        auto numCellsForThisWorker = slice.width() * slice.height();
-        auto halos = grids::Halos::forSlice(slice, fullSize);
-        auto v = graph.addVertex(propagateCs,
-                                 "PropagateVertex",
-                                 {
-                                         {"in",              applySlice(cells, slice)},
-                                         {"out",             applySlice(tensors["tmp_cells"], slice)},
-                                         {"numRows",         slice.height()},
-                                         {"numCols",         slice.width()},
-                                         {"haloTop",         applySlice(cells, *halos.top)},
-                                         {"haloBottom",      applySlice(cells, *halos.bottom)},
-                                         {"haloLeft",        applySlice(cells, *halos.left)},
-                                         {"haloRight",       applySlice(cells, *halos.right)},
-                                         {"haloTopLeft",     applySlice(cells,
-                                                                        *halos.topLeft)[lbm::SpeedIndexes::SouthEast]}, // flipped directions!
-                                         {"haloTopRight",    applySlice(cells,
-                                                                        *halos.topRight)[lbm::SpeedIndexes::SouthWest]},// flipped directions!
-                                         {"haloBottomLeft",  applySlice(cells,
-                                                                        *halos.bottomLeft)[lbm::SpeedIndexes::NorthEast]},// flipped directions!
-                                         {"haloBottomRight", applySlice(cells,
-                                                                        *halos.bottomRight)[lbm::SpeedIndexes::NorthWest]},// flipped directions!
-                                 });
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-    }
-
-    return Execute(propagateCs);
-}
-
-auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors) -> Program {
-
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
-    const auto numWorkers = graph.getTarget().getNumWorkerContexts();
-
-
-    ComputeSet accelerateCs = graph.addComputeSet("accelerate");
-
-    auto cells = tensors["cells"];
-    auto obstacles = tensors["obstacles"];
-    assert(cells.dim(0) > 1);
-    auto cellsSecondRowFromTop = cells.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
-    auto obstaclesSecondRowFromTop = obstacles.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
-
-    // For now, let's try the approach of spreading accelerate computation over more tiles, even if that
-    // means redistributing data from cells and obstacles (i.e. keep tiles busy rather than minimise data transfer)
-    auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
-            {1, params.nx},
-            numTilesPerIpu
-    );
-    auto workerGranularityMappings = grids::toWorkerMappings(
-            tileGranularityMappings,
-            numWorkers
-    );
-
-    for (const auto &[target, slice] : workerGranularityMappings) {
-
-        auto tile = target.ipu() * numTilesPerIpu + target.tile();
-
-        auto numCellsForThisWorker = slice.width() * slice.height();
-        auto v = graph.addVertex(accelerateCs,
-                                 "AccelerateFlowVertex",
-                                 {{"cellsInSecondRow",     applySlice(cellsSecondRowFromTop, slice)},
-                                  {"obstaclesInSecondRow", applySlice(obstaclesSecondRowFromTop, slice)},
-                                  {"partitionWidth",       numCellsForThisWorker},
-                                  {"density",              params.density},
-                                  {"accel",                params.accel}});
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-    }
-    return Execute(accelerateCs);
-}
-
-
-auto
-timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors, grids::TileMappings &mappings) -> Program {
-    return Sequence{
-            accelerate_flow(graph, params, tensors),
-            propagate(graph, params, tensors, mappings),
-            collision(graph, params, tensors, mappings)
-    };
-}
-
-auto mapCellsToTiles(Graph &graph, Tensor &cells, grids::TileMappings &tileMappings, bool print = false) {
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles();
-    for (const auto&[target, slice]: tileMappings) {
-        const auto tile = target.ipu() * numTilesPerIpu + target.tile();
-
-        if (print) {
-            std::cout << "tile: " << tile << " target: " << target.ipu() << ":" << target.tile() << ":"
-                      << target.worker() <<
-                      "(r: " << slice.rows().from() << ",c: " << slice.cols().from() << ",w: " << slice.width() <<
-                      ",h: " << slice.height() << std::endl;
-        }
-        graph.setTileMapping(cells
-                                     .slice(slice.rows().from(), slice.rows().to(), 0)
-                                     .slice(slice.cols().from(), slice.cols().to(), 1),
-                             tile);
-    }
-}
-
-
-auto main(int argc, char *argv[]) -> int {
-    double total_compute_time = 0.0;
-
-    auto timedStep = [&total_compute_time](const std::string description, auto f,
-                                           bool addToComputeTime = false) {
-        std::cerr << std::setw(60) << description;
-        auto tic = std::chrono::high_resolution_clock::now();
-        f();
-        auto toc = std::chrono::high_resolution_clock::now();
-        auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
-        std::cerr << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
-        if (addToComputeTime) total_compute_time += diff;
-    };
-
-    if (argc != 3) {
-        std::cerr << "Expected usage: " << argv[0] << " <image_file> <obstacles_file>" << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    auto device = lbm::getIpuModel();
-//    auto device = lbm::getIpuDevice();
-    if (!device.has_value()) {
-        return EXIT_FAILURE;
-    }
-
-    const auto nx = 128;
-    const auto ny = 128;
-    const auto n_iter = 100;
-
-    auto numTilesPerIpu = device->getTarget().getNumTiles() / device->getTarget().getNumIPUs();
-    auto numWorkers = device->getTarget().getNumWorkerContexts();
-    auto numIpus = device->getTarget().getNumIPUs();
-
-    auto ipuGranularityMapping = grids::partitionGridForIpus({params->ny, params->nx}, numIpus);
-
-    auto tileGranularityMappings = grids::partitionGridToTilesForSingleIpu(
-            {params->ny, params->nx},
-            numTilesPerIpu
-    );
-    auto workerGranularityMappings = grids::toWorkerMappings(
-            tileGranularityMappings,
-            numWorkers
-    );
-
-    auto tensors = std::map<std::string, Tensor>{};
-
-    std::chrono::high_resolution_clock::time_point tic, toc;
-
-    //------
-    Graph graph(device.value().getTarget());
-
-    timedStep("Building computational graph",
-              [&]() {
-                  popops::addCodelets(graph);
-
-                  graph.addCodelets("D2Q9Codelets.cpp");
-
-                  tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
-                                                        "av_vel");
-                  tensors["cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds}, "cells");
-                  tensors["tmp_cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
-                                                           "tmp_cells");
-                  tensors["obstacles"] = graph.addVariable(BOOL, {params->ny, params->nx}, "obstacles");
-                  tensors["perWorkerPartialSums"] = graph.addVariable(FLOAT,
-                                                                      {numWorkers * numTilesPerIpu * numIpus},
-                                                                      poplar::VariableMappingMethod::LINEAR,
-                                                                      "perWorkerPartialSums");
-                  tensors["perWorkerPartialCounts"] = graph.addVariable(INT,
-                                                                        {numWorkers * numTilesPerIpu * numIpus},
-                                                                        poplar::VariableMappingMethod::LINEAR,
-                                                                        "perWorkerPartialCounts");
-
-                  tensors["reducedSum"] = graph.addVariable(FLOAT, {}, "reducedSum");
-                  graph.setInitialValue(tensors["reducedSum"], 0.f);
-                  graph.setTileMapping(tensors["reducedSum"], 0);
-                  tensors["reducedCount"] = graph.addVariable(INT, {}, "reducedCount");
-                  graph.setTileMapping(tensors["reducedCount"], 0);
-                  graph.setInitialValue(tensors["reducedCount"], 0u);
-
-
-                  mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
-                  mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
-                  mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
-
-                  tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
-                  graph.setTileMapping(tensors["counter"], 0);
-                  graph.setInitialValue(tensors["counter"], 0);
-              });
-
-    std::unique_ptr<Engine> engine;
-    auto av_vels = std::vector<float>(params->maxIters, 0.0f);
-
-    timedStep("Creating engine and loading computational graph", [&]() {
-
-        auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
-        auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
-                                                             lbm::NumSpeeds * params->nx * params->ny);
-        auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
-                                                       lbm::NumSpeeds * params->nx * params->ny);
-        auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL, params->nx * params->ny);
-
-        auto copyCellsAndObstaclesToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
-                                                      Copy(inStreamObstacles, tensors["obstacles"]));
-        auto streamBackToHostProg = Sequence(
-                Copy(tensors["cells"], outStreamFinalCells),
-                Copy(tensors["av_vel"], outStreamAveVelocities)
+        graph.setCycleEstimate(v, 100);
+        graph.setTileMapping(v, target.virtualTile());
+        n = applyOrZero(halos.top, tmpImgTensor, slice.width() - 2);
+        s = applyOrZero(halos.bottom, tmpImgTensor, slice.width() - 2);
+        e = applyOrZero(halos.right, tmpImgTensor, slice.height() - 2);
+        w = applyOrZero(halos.left, tmpImgTensor, slice.height() - 2);
+        nw = applyOrZero(halos.topLeft, tmpImgTensor);
+        ne = applyOrZero(halos.topRight, tmpImgTensor);
+        sw = applyOrZero(halos.bottomLeft, tmpImgTensor);
+        se = applyOrZero(halos.bottomRight, tmpImgTensor);
+        v = graph.addVertex(outToIn,
+                            "GaussianBlurCodelet<float>",
+                            {
+                                    {"width",  slice.width()},
+                                    {"height", slice.height()},
+                                    {"out",    utils::applySlice(imgTensor, slice)},
+                                    {"in",     utils::applySlice(tmpImgTensor, slice)},
+                                    {"n",      n},
+                                    {"s",      s},
+                                    {"e",      e},
+                                    {"w",      w},
+                                    {"nw",     nw},
+                                    {"sw",     sw},
+                                    {"ne",     ne},
+                                    {"se",     se},
+                            }
         );
+        graph.setCycleEstimate(v, 100);
+        graph.setTileMapping(v, target.virtualTile());
+    }
+    Sequence stencilProgram = {Execute(inToOut), Execute(outToIn)};
 
-        auto prog = Repeat(params->maxIters, Sequence{
-                timestep(graph, *params, tensors, workerGranularityMappings),
-                averageVelocity(graph, *params, tensors, workerGranularityMappings)
+
+    auto copyToDevice = Copy(inImg, imgTensor);
+    auto copyBackToHost = Copy(imgTensor, outImg);
+
+    const auto programs = std::vector<Program>{copyToDevice,
+                                               Repeat(numIters, stencilProgram),
+                                               copyBackToHost};
+
+
+    auto toc = std::chrono::high_resolution_clock::now();
+    auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+    std::cout << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" <<
+              std::endl;
+
+    if (debug) {
+        utils::serializeGraph(graph);
+    }
+    if (auto dumpGraphVisualisations =
+                std::getenv("DUMP_GRAPH_VIZ") != nullptr;  dumpGraphVisualisations) {
+        ofstream vertexGraph;
+        vertexGraph.open("vertexgraph.dot");
+        graph.outputVertexGraph(vertexGraph,
+                                programs);
+        vertexGraph.close();
+
+        ofstream computeGraph;
+        computeGraph.open("computegraph.dot");
+        graph.outputComputeGraph(computeGraph,
+                                 programs);
+        computeGraph.close();
+    }
+    std::cout << "Compiling graph";
+    tic = std::chrono::high_resolution_clock::now();
+    if (compileOnly) {
+        auto exe = poplar::compileGraph(graph, programs, debug ? utils::POPLAR_ENGINE_OPTIONS_DEBUG
+                                                               : utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
+        toc = std::chrono::high_resolution_clock::now();
+        diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        std::cout << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" <<
+                  std::endl;
+
+        stringstream filename;
+        filename << "stencil_" << maybeImg->width << "x" << maybeImg->height << ".exe";
+        ofstream exe_file;
+        exe_file.open(filename.str());
+        exe.serialize(exe_file);
+        exe_file.close();
+
+        return EXIT_SUCCESS;
+    } else {
+        auto engine = Engine(graph, programs,
+                             utils::POPLAR_ENGINE_OPTIONS_DEBUG);
+
+        toc = std::chrono::high_resolution_clock::now();
+        diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        std::cout << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" <<
+                  std::endl;
+
+
+        engine.connectStream(">>img", img);
+        engine.connectStream("<<img", img);
+
+        engine.load(*device);
+
+        utils::timedStep("Copying to device", [&]() -> void {
+            engine.run(0);
         });
 
-        engine = std::unique_ptr<Engine>(
-                new Engine(graph, {copyCellsAndObstaclesToDevice, prog, streamBackToHostProg},
-                           lbm::POPLAR_ENGINE_OPTIONS_DEBUG));
-        engine->connectStream(outStreamAveVelocities, av_vels.data());
-        engine->connectStream(outStreamFinalCells, cells.getData());
-        engine->connectStream(inStreamCells, cells.getData());
-        engine->connectStream(inStreamObstacles, obstacles->getData());
+        utils::timedStep("Running stencil iterations", [&]() -> void {
+            engine.run(1);
+        });
+        utils::timedStep("Copying to host", [&]() -> void {
+            engine.run(2);
+        });
 
-        engine->load(device.value());
-    });
+        if (debug) {
+            utils::captureProfileInfo(engine);
 
-    timedStep("Running copy to device step", [&]() {
-        engine->run(0);
-    });
-
-    timedStep("Running LBM", [&]() {
-        engine->run(1);
-    }, true);
-
-    timedStep("Running copy to host step", [&]() {
-        engine->run(2);
-    });
-
-    timedStep("Writing output files ", [&]() {
-        lbm::writeAverageVelocities("av_vels.dat", av_vels);
-        lbm::writeResults("final_state.dat", *params, *obstacles, cells);
-    });
+//            engine.printProfileSummary(std::cout,
+//                                       OptionFlags{{"showExecutionSteps", "false"}});
+        }
+    }
 
 
-    timedStep("Capturing profiling info", [&]() {
-        lbm::captureProfileInfo(*engine, graph);
-    });
+    auto cImg = toCharImage(stripPadding(toChannelsLast(fImage)));
 
-//
-//    engine.printProfileSummary(std::cout,
-//                               OptionFlags{{"showExecutionSteps", "true"}});
-
-
-    std::cout << "==done==" << std::endl;
-    std::cout << "Total compute time was \t" << std::right << std::setw(12) << std::setprecision(5)
-              << total_compute_time
-              << "s" << std::endl;
-
-    std::cout << "Reynolds number:  \t" << std::right << std::setw(12) << std::setprecision(12) << std::scientific
-              << lbm::reynoldsNumber(*params, av_vels[params->maxIters - 1]) << std::endl;
+    if (!savePng(cImg, outputFilename)) {
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }

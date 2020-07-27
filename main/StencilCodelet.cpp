@@ -7,137 +7,131 @@
 
 using namespace poplar;
 auto constexpr NumChannels = 4;
+using namespace poplar;
 
+template<typename T>
+T stencil(const T nw, const T n, const T ne, const T w, const T m,
+          const T e, const T sw,
+          const T s, const T se) {
+    return 1.f / 16 * (nw + ne + sw + se) + 4.f / 16 * m + 2.f / 16 * (e + sw + s + se);
+}
+
+
+template<typename T>
 class GaussianBlurCodelet : public Vertex {
 
 public:
-    Input <Vector<float>> haloTop; // numCols x NumChans
-    Input <Vector<float>> haloLeft; // numRows x NumChans
-    Input <Vector<float>> haloRight; // numRows x NumChans
-    Input <Vector<float>> haloBottom; // numCols x NumChans
-    Input<float> haloTopLeft; // NumChans
-    Input<float> haloTopRight;// NumChans
-    Input<float> haloBottomLeft;// NumChans
-    Input<float> haloBottomRight;// NumChans
+    Input <Vector<T>> in;
+    Input <T> nw, ne, sw, se;
+    Input <Vector<T>> n, s, w, e;
+    Output <Vector<T>> out;
+    Input<unsigned> width;
+    Input<unsigned> height;
 
-    Input <Vector<float>> in; // numCols x numRows x NumChans
-    Input<unsigned> numRows; // i.e. excluding halo
-    Input<unsigned> numCols; // i.e. excluding halo
-
-    Output <Vector<float>> out; // numCols x numRows x NumChans
-
+    // Average the moore neighbourhood of the non-ghost part of the block
     bool compute() {
-        const auto nc = *numCols;
-        const auto nr = *numRows;
+        const auto nx = *width;
+        const auto ny = *height;
+        // Only works if this is at least a 3x3 block (excluding halos), and in must be same size as out
+        if (nx > 2 && ny > 2) {
+            // top left
+            {
+                constexpr auto x = 0u;
+                constexpr auto y = 0u;
+                out[y * nx + x] = stencil(*nw, n[x], n[x + 1],
+                                          w[y], in[y * nx + x], in[y * nx + x + 1],
+                                          w[y + 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
+            }
 
-        // Remember layout is (0,0) = top left
-        const auto TOP = 0ul;
-        constexpr auto BOTTOM = nr - 1;
-        constexpr auto LEFT = 0ul;
-        const auto RIGHT = nc - 1;
-        const int northCellOffset = +((int) nc);
-        const int southCellOffset = -((int) nc);
-        constexpr int eastCellOffset = +(int) 1;
-        constexpr int westCellOffset = -(int) 1;
-        constexpr int middleCellOffset = 0;
-        constexpr int sideHaloNorthCellOffset = +(int) 1; // when we are using the left or right halo and want to know what up is
-        constexpr int sideHaloSouthCellOffset = -(int) 1;// when we are using the left or right halo and want to know what down is
-        const int northWestCellOffset = +northCellOffset + westCellOffset;
-        const int northEastCellOffset = +northCellOffset + eastCellOffset;
-        const int southEastCellOffset = +southCellOffset + eastCellOffset;
-        const int southWestCellOffset = +southCellOffset + westCellOffset;
-
-
-        for (auto row = BOTTOM; row <= TOP; row++) {
-            for (auto col = LEFT; col <= RIGHT; col++) {
-                for (auto chan = 0; chan < NumChannels; chan++) {
-                    const auto offset = [chan](size_t i) -> size_t {return i * NumChannels + chan;};
-
-                    const int cellIdx = row * nc + col;
-                    const auto n = [=]() -> float {
-                        if (row == TOP) {
-                            return haloTop[offset(col + middleCellOffset)];
-                        }
-                        return in[offset(cellIdx + northCellOffset)];
-                    }();
-
-                    const auto ne = [=]() -> float {
-                        if (row == TOP && col == RIGHT) {
-                            return haloTopRight[offset(0)];
-                        } else if (row == TOP) {
-                            return haloTop[offset(col + eastCellOffset)];
-                        } else if (col == RIGHT) {
-                            return haloRight[offset(row + sideHaloNorthCellOffset)];
-                        }
-                        return in[offset(cellIdx + northEastCellOffset)];
-                    }();
-
-                    const auto nw = [=]() -> float {
-                        if (row == TOP && col == LEFT) {
-                            return haloTopLeft[offset(0)];
-                        } else if (row == TOP) {
-                            return haloTop[offset(col + westCellOffset)];
-                        } else if (col == LEFT) {
-                            return haloLeft[offset(row + sideHaloNorthCellOffset)];
-                        }
-                        return in[cellIdx + northWestCellOffset];
-                    }();
-
-                    const auto w = [=]() -> float {
-                        if (col == LEFT) {
-                            return haloLeft[offset(row + middleCellOffset)];
-                        }
-                        return in[offset(cellIdx + westCellOffset)];
-                    }();
-
-                    const auto m = [=]() -> float {
-                        return in[offset(cellIdx + middleCellOffset)];
-                    }();
-
-                    const auto e = [=]() -> float {
-                        if (col == RIGHT) {
-                            return haloRight[offset(row + middleCellOffset)];
-                        }
-                        return in[offset(cellIdx + eastCellOffset)];
-                    }();
-
-                    const auto s = [=]() -> float {
-                        if (row == BOTTOM) {
-                            return haloBottom[offset(col + middleCellOffset)];
-                        }
-                        return in[offset(cellIdx + southCellOffset)];
-                    }();
-
-                    const auto se = [=]() -> float {
-                        if (row == BOTTOM && col == RIGHT) {
-                            return haloBottomRight[offset(0)];
-                        } else if (row == BOTTOM) {
-                            return haloBottom[offset(col + eastCellOffset)];
-                        } else if (col == RIGHT) {
-                            return haloRight[offset(row + sideHaloSouthCellOffset)];
-                        }
-                        return in[offset(cellIdx + southEastCellOffset)];
-                    }();
-
-
-                    const auto sw = [=]() -> float {
-                        if (row == BOTTOM && col == LEFT) {
-                            return haloBottomLeft[offset(0)];
-                        } else if (row == BOTTOM) {
-                            return haloBottom[offset(col + westCellOffset)];
-                        } else if (col == LEFT) {
-                            return haloLeft[offset(row + sideHaloSouthCellOffset)];
-                        }
-                        return in[offset(cellIdx + southWestCellOffset)];
-                    }();
-
-                    out[offset(cellIdx)] = ((ne + nw + se + sw) + 2.f * (n + s + e + w) + 4.f * m) / 16.f;
+            // top
+            {
+                constexpr auto y = 0u;
+                for (auto x = 1u; x < nx - 1; x++) {
+                    out[y * nx + x] = stencil(n[x - 1], n[x], n[x + 1],
+                                              in[y * nx + x - 1], in[y * nx + x], in[y * nx + x + 1],
+                                              in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
                 }
             }
+
+            // top right
+            {
+                const auto x = nx - 1u;
+                constexpr auto y = 0u;
+                out[y * nx + x] =
+                        stencil(n[x - 1], n[x], *ne,
+                                in[y * nx + x - 1], in[y * nx + x], e[y],
+                                in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], e[y + 1]);
+            }
+
+
+            // left col
+            {
+                constexpr auto x = 0u;
+                for (auto y = 1; y < ny - 1; y++) {
+                    out[y * nx + x] = stencil(w[y - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
+                                              w[y], in[y * nx + x], in[y * nx + x + 1],
+                                              w[y + 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
+                }
+            }
+
+            // middle block
+            for (auto y = 1; y < ny - 1; y++) {
+                for (auto x = 1; x < nx - 1; x++) {
+                    out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
+                                              in[y * nx + x - 1], in[y * nx + x], in[y * nx + x + 1],
+                                              in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], in[(y + 1) * nx + x + 1]);
+                }
+            }
+
+            // right col
+            {
+                const auto x = nx - 1u;
+                for (auto y = 1; y < ny - 1u; y++) {
+                    out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], e[y - 1],
+                                              in[y * nx + x - 1], in[y * nx + x], e[y],
+                                              in[(y + 1) * nx + x - 1], in[(y + 1) * nx + x], e[y + 1]);
+                }
+            }
+
+            // bottom left
+            {
+                const auto y = ny - 1;
+                constexpr auto x = 0u;
+
+                out[y * nx + x] = stencil(w[y - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
+                                          w[y], in[y * nx + x], in[y * nx + x + 1],
+                                          *sw, s[x], s[x + 1]);
+            }
+
+            // bottom
+            {
+                const auto y = ny - 1;
+                for (auto x = 1u; x < nx - 1u; x++) {
+                    out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], in[(y - 1) * nx + x + 1],
+                                              in[y * nx + x - 1], in[y * nx + x], in[y * nx + x + 1],
+                                              s[x - 1], s[x], s[x + 1]);
+                }
+            }
+
+            // bottom right
+            {
+                const auto y = ny - 1;
+                const auto x = nx - 1;
+
+                out[y * nx + x] = stencil(in[(y - 1) * nx + x - 1], in[(y - 1) * nx + x], e[y - 1],
+                                          in[y * nx + x - 1], in[y * nx + x], e[y],
+                                          s[x - 1], s[x], *se);
+            }
+            return true;
         }
-        return true;
+        return false;
     }
 };
+
+template
+class GaussianBlurCodelet<float>;
+
+
 //
 //
 //class GaussianBlurCodeletUnrolled : public Vertex {
