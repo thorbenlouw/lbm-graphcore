@@ -253,19 +253,16 @@ public:
             {
 #pragma unroll 4
                 for (auto c = 0u; c < nc; c++) {
-                    const auto lIdx = c;
-                    const auto mIdx = c;
-                    const auto rIdx = NumChannels + 1;
-                    const auto _nw = nw[lIdx];
-                    const auto _w = w[lIdx];
-                    const auto _sw = sw[lIdx];
-                    const auto _n = n[mIdx];
-                    const auto _m = in[mIdx];
-                    const auto _s = s[mIdx];
-                    const auto _ne = n[rIdx];
-                    const auto _e = in[rIdx];
-                    const auto _se = s[rIdx];
-                    out[mIdx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                    const auto _nw = nw[c];
+                    const auto _w = w[c];
+                    const auto _sw = sw[c];
+                    const auto _n = n[c];
+                    const auto _m = in[c];
+                    const auto _s = s[c];
+                    const auto _ne = n[NumChannels + c];
+                    const auto _e = in[NumChannels + c];
+                    const auto _se = s[NumChannels + c];
+                    out[c] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
                 }
             }
 
