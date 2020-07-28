@@ -28,7 +28,7 @@ namespace stencil {
 
         if (error) {
             std::cerr << "PNG decoder error " << error << ": " << lodepng_error_text(error) << std::endl;
-            return nullopt;
+            return std::nullopt;
         }
 
         return img;

@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
     cout << inputFilename << " is " << maybeImg->width << "x" << maybeImg->height << " pixels in size." << std::endl;
 
     auto tmp_img = std::make_unique<float[]>((maybeImg->width) * (maybeImg->height) * NumChannels);
-    auto fImage = toChannelsFirst(zeroPad(toFloatImage(*maybeImg)));
+    auto fImage = zeroPad(toFloatImage(*maybeImg));
     auto img = fImage.intensities.data();
 
     auto device = useIpuModel ? utils::getIpuModel(numIpus) : utils::getIpuDevice(numIpus);
@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
         std::cerr << "Couldn't fit the problem on the " << numIpus << " ipus." << std::endl;
         return EXIT_FAILURE;
     }
-    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getNumTiles(), 3*6, 3*6);
+    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getNumTiles());
     auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings);
 
     for (const auto &[target, slice]: tileLevelMappings) {
@@ -96,7 +96,7 @@ int main(int argc, char *argv[]) {
     auto zeros = std::vector<float>(std::max(fImage.width, fImage.height), 0.f);
     for (const auto &[target, slice]: workerLevelMappings) {
         // Halos top-left = (0,0) and no wraparound
-        const auto halos = grids::Halos::forSlice(slice, {fImage.height, fImage.width}, false, false);
+        const auto halos = grids::Halos::forSliceTopIs0NoWrap(slice, {fImage.height, fImage.width});
 
         const auto maybeZerosVector = std::optional<Tensor>{};
         const auto maybeZeroScalar = std::optional<Tensor>{};
@@ -106,35 +106,31 @@ int main(int argc, char *argv[]) {
                                                             Tensor &tensor,
                                                             const unsigned borderSize = 1u) -> Tensor {
             if (maybeSlice.has_value()) {
-////                if (borderSize == 1) {
-////                    return utils::applySlice(tensor, *maybeSlice)[0]; // scalar!
-////                }
                 return utils::applySlice(tensor, *maybeSlice);
             } else {
-//                if (borderSize == 1) { // scalar!
-//                    const auto zeroScalar = graph.addConstant(FLOAT, {}, 0.f, "0");
-//                    graph.setTileMapping(zeroScalar, _target.virtualTile());
-//                    return zeroScalar;
-//                } else {
-                    const auto zerosVector = graph.addConstant(FLOAT, {borderSize*4}, zeros.data(), "{0...}");
-                    graph.setTileMapping(zerosVector, _target.virtualTile());
-                    return zerosVector;
-//                }
+                const auto zerosVector = graph.addConstant(FLOAT, {borderSize * 4}, zeros.data(), "{0...}");
+                graph.setTileMapping(zerosVector, _target.virtualTile());
+                return zerosVector;
             }
         };
 
-        // TODO deal with slices that are only 2 rows thick!
 
-        auto n = applyOrZero(halos.top, imgTensor, slice.width() - 2);
-        auto s = applyOrZero(halos.bottom, imgTensor, slice.width() - 2);
-        auto e = applyOrZero(halos.right, imgTensor, slice.height() - 2);
-        auto w = applyOrZero(halos.left, imgTensor, slice.height() - 2);
+        auto n = applyOrZero(halos.top, imgTensor, slice.width());
+        auto s = applyOrZero(halos.bottom, imgTensor, slice.width());
+        auto e = applyOrZero(halos.right, imgTensor, slice.height());
+        auto w = applyOrZero(halos.left, imgTensor, slice.width());
         auto nw = applyOrZero(halos.topLeft, imgTensor);
         auto ne = applyOrZero(halos.topRight, imgTensor);
         auto sw = applyOrZero(halos.bottomLeft, imgTensor);
         auto se = applyOrZero(halos.bottomRight, imgTensor);
+        const auto _slice = slice;
+        const auto vertexName = [_slice]() -> std::string {
+            if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodelet<float>";
+            else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodelet<float>";
+            else return "GaussianWide1RowBlurCodelet<float>";
+        };
         auto v = graph.addVertex(inToOut,
-                                 "GaussianBlurCodelet<float>",
+                                 vertexName(),
                                  {
                                          {"width",  slice.width()},
                                          {"height", slice.height()},
@@ -152,16 +148,16 @@ int main(int argc, char *argv[]) {
         );
         graph.setCycleEstimate(v, 100);
         graph.setTileMapping(v, target.virtualTile());
-        n = applyOrZero(halos.top, tmpImgTensor, slice.width() - 2);
-        s = applyOrZero(halos.bottom, tmpImgTensor, slice.width() - 2);
-        e = applyOrZero(halos.right, tmpImgTensor, slice.height() - 2);
-        w = applyOrZero(halos.left, tmpImgTensor, slice.height() - 2);
+        n = applyOrZero(halos.top, tmpImgTensor, slice.width());
+        s = applyOrZero(halos.bottom, tmpImgTensor, slice.width());
+        e = applyOrZero(halos.right, tmpImgTensor, slice.height());
+        w = applyOrZero(halos.left, tmpImgTensor, slice.height());
         nw = applyOrZero(halos.topLeft, tmpImgTensor);
         ne = applyOrZero(halos.topRight, tmpImgTensor);
         sw = applyOrZero(halos.bottomLeft, tmpImgTensor);
         se = applyOrZero(halos.bottomRight, tmpImgTensor);
         v = graph.addVertex(outToIn,
-                            "GaussianBlurCodelet<float>",
+                            vertexName(),
                             {
                                     {"width",  slice.width()},
                                     {"height", slice.height()},
@@ -260,13 +256,13 @@ int main(int argc, char *argv[]) {
         if (debug) {
             utils::captureProfileInfo(engine);
 
-//            engine.printProfileSummary(std::cout,
-//                                       OptionFlags{{"showExecutionSteps", "false"}});
+            engine.printProfileSummary(std::cout,
+                                       OptionFlags{{"showExecutionSteps", "false"}});
         }
     }
 
 
-    auto cImg = toCharImage(stripPadding(toChannelsLast(fImage)));
+    auto cImg = toCharImage(stripPadding(fImage));
 
     if (!savePng(cImg, outputFilename)) {
         return EXIT_FAILURE;

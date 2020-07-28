@@ -146,7 +146,7 @@ auto propagate(Graph &graph,
     for (const auto &[target, slice] : mappings) {
         auto tile = target.virtualTile(numTilesPerIpu);
         auto numCellsForThisWorker = slice.width() * slice.height();
-        auto halos = grids::Halos::forSlice(slice, fullSize);
+        auto halos = grids::Halos::forSliceBottomIs0Wraparound(slice, fullSize);
         auto v = graph.addVertex(propagateCs,
                                  "PropagateVertex",
                                  {

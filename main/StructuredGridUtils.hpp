@@ -546,6 +546,7 @@ namespace grids {
                           const size_t numTiles = DefaultNumTilesPerIpu,
                           const size_t minRowsPerTile = DefaultMinRowsPerTile,
                           const size_t minColsPerTile = DefaultMinColsPerTile) {
+        assert(ipuMappings.size() > 0);
         GridPartitioning result = {};
         for (const auto&[target, ipuSlice]: ipuMappings) {
             auto newMappings = toTilePartitionsForSingleIpu(target, ipuSlice, numTiles,
@@ -576,8 +577,73 @@ namespace grids {
                 bottomLeft(std::move(bottomLeft)), bottomRight(std::move(bottomRight)) {
         }
 
-        // IMPORTANT! (0,0) is considered bottom left unless you set bottomRightIs00 = false
-        static auto forSlice(Slice2D slice, Size2D matrixSize, bool wraparound = true, bool bottomRightIs00= true)  -> Halos {
+
+        // Top left is (0,0) as in Gaussian Blur
+        static auto forSliceTopIs0NoWrap(Slice2D slice, Size2D matrixSize) -> Halos {
+            // Some shorthand sugar
+            const auto x = slice.cols().from();
+            const auto y = slice.rows().from();
+            const auto w = slice.width();
+            const auto h = slice.height();
+            const auto nx = matrixSize.cols();
+            const auto ny = matrixSize.rows();
+
+            int t, l;
+            unsigned int r, b;
+            t = (int) y - 1;
+            l = (int) x - 1;
+            r = x + w;
+            b = y + h;
+
+            auto topLeft = (t > 0 && l > 0)
+                           ? std::optional<Slice2D>{
+                            {{(unsigned) t, (unsigned) t + 1},
+                                    {(unsigned) l, (unsigned) l + 1}}}
+                           : std::nullopt;
+            auto top = (t > 0)
+                       ? std::optional<Slice2D>{
+                            {{(unsigned) t, (unsigned) t + 1},
+                                    {x, x + w}}}
+                       : std::nullopt;
+
+            auto topRight = (t > 0 && r < nx - 1)
+                            ? std::optional<Slice2D>{
+                            {
+                                    {(unsigned) t, (unsigned) t + 1},
+                                    {r, r + 1}
+                            }}
+                            : std::nullopt;
+
+            auto left = (l > 0) ? std::optional<Slice2D>{
+                    {{y, y + h},
+                            {(unsigned) l, (unsigned) l + 1}}} : std::nullopt;
+            auto right = r < nx - 1
+                         ? std::optional<Slice2D>{{{y, y + h},
+                                                          {r, r + 1}}}
+                         : std::nullopt;
+            auto bottomLeft = (l > 0 && b < ny - 1)
+                              ? std::optional<Slice2D>{{{b, b + 1},
+                                                               {(unsigned) l, (unsigned) l + 1}}}
+                              : std::nullopt;
+            auto bottom = (b < ny - 1)
+                          ? std::optional<Slice2D>{
+                            {{b, b + 1},
+                                    {x, x + w}}}
+                          : std::nullopt;
+            auto bottomRight = (b < ny - 1) && (r < nx - 1)
+                               ? std::optional<Slice2D>{
+                            {
+                                    {b, b + 1},
+                                    {r, r + 1}
+                            }} : std::nullopt;
+            return Halos(top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight);
+
+        }
+
+
+        // IMPORTANT! (0,0) is considered bottom left (as in LBM )
+        static auto
+        forSliceBottomIs0Wraparound(Slice2D slice, Size2D matrixSize) -> Halos {
             // Some shorthand sugar
             const auto x = slice.cols().from();
             const auto y = slice.rows().from();
@@ -587,63 +653,41 @@ namespace grids {
             const auto ny = matrixSize.rows();
 
             std::optional<size_t> t, l, r, b;
-            if (wraparound) {
-                t = (ny + y + 1) % ny;
-                l = (nx + x - 1) % nx;
-                r = (nx + x + w) % nx;
-                b = (ny + y - h) % ny;
-            } else {
-                t = (y < ny - 1) ? std::optional<size_t>{y + 1} : std::nullopt;
-                l = (x > 0) ? std::optional<size_t>{x - 1} : std::nullopt;
-                r = (x + w < nx) ? std::optional<size_t>{x + w} : std::nullopt;
-                b = (y > 0) ? std::optional<size_t>{y - 1} : std::nullopt;
-            }
+            t = (ny + y + 1) % ny;
+            l = (nx + x - 1) % nx;
+            r = (nx + x + w) % nx;
+            b = (ny + y - h) % ny;
 
-            auto topLeft = (l.has_value() && t.has_value())
-                           ? std::optional<Slice2D>{
-                            {{*t, *t + 1},
-                                    {*l, *l + 1}}}
-                           : std::nullopt;
-            auto top = (t.has_value())
-                       ? std::optional<Slice2D>{
-                            {{*t, *t + 1},
-                                    {x, x + w}}}
-                       : std::nullopt;
+            auto topLeft = std::optional<Slice2D>{
+                    {{*t, *t + 1},
+                            {*l, *l + 1}}};
+            auto top = std::optional<Slice2D>{
+                    {{*t, *t + 1},
+                            {x, x + w}}};
 
-            auto topRight = (t.has_value() && r.has_value())
-                            ? std::optional<Slice2D>{
-                            {
-                                    {*t, *t + 1},
-                                    {*r, *r + 1}
-                            }}
-                            : std::nullopt;
+            auto topRight = std::optional<Slice2D>{
+                    {
+                            {*t, *t + 1},
+                            {*r, *r + 1}
+                    }};
 
-            auto left = (l.has_value()) ? std::optional<Slice2D>{
+            auto left = std::optional<Slice2D>{
                     {{y, y + h},
-                            {*l, *l + 1}}} : std::nullopt;
-            auto right = r.has_value()
-                         ? std::optional<Slice2D>{{{y, y + h},
-                                                          {*r, *r + 1}}}
-                         : std::nullopt;
-            auto bottomLeft = (l.has_value() && b.has_value())
-                              ? std::optional<Slice2D>{{{*b, *b + 1},
-                                                               {*l, *l + 1}}}
-                              : std::nullopt;
-            auto bottom = (b.has_value())
-                          ? std::optional<Slice2D>{
-                            {{*b, *b + 1},
-                                    {x, x + w}}}
-                          : std::nullopt;
-            auto bottomRight = (b.has_value() && r.has_value())
-                               ? std::optional<Slice2D>{
-                            {
-                                    {*b, *b + 1},
-                                    {*r, *r + 1}
-                            }} : std::nullopt;
-            if (bottomRightIs00)
-                return Halos(top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight);
-            else
-                return Halos(bottom, top, left, right, bottomLeft, bottomRight, topLeft, topRight);
+                            {*l, *l + 1}}};
+            auto right = std::optional<Slice2D>{{{y, y + h},
+                                                        {*r, *r + 1}}};
+            auto bottomLeft = std::optional<Slice2D>{{{*b, *b + 1},
+                                                             {*l, *l + 1}}};
+            auto bottom = std::optional<Slice2D>{
+                    {{*b, *b + 1},
+                            {x, x + w}}};
+            auto bottomRight = std::optional<Slice2D>{
+                    {
+                            {*b, *b + 1},
+                            {*r, *r + 1}
+                    }};
+            return Halos(top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight);
+
         }
 
     };
