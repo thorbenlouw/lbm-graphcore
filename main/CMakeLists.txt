@@ -53,6 +53,17 @@ add_executable(cpu_stencil
         ${Main_SRCS}
         )
 
+add_executable(viz_tile_map
+        VisualiseTileMapping.cpp
+        lib/lodepng/lodepng.cpp
+        ${Main_SRCS}
+        )
+
+add_executable(tile_mapping_stats
+        TileMappingStats.cpp
+        ${Main_SRCS}
+        )
+
 add_executable(lbm_with_kernels
         lbm_with_kernels.cpp
         ${Main_SRCS}

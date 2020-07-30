@@ -180,13 +180,14 @@ namespace grids {
             auto c = 0u;
             while (c < slice.width()) {
                 auto c_end = min(c + minColsPerTile, slice.width());
+                assert(tile < DefaultNumTilesPerIpu);
                 partitioning.insert({PartitioningTarget{target.ipu(), tile},
                                      {{r + slice.rows().from(), r_end + slice.rows().from()},
                                       {c + slice.cols().from(), c_end + slice.cols().from()}}});
                 tile++;
-                c += minColsPerTile;
+                c = c_end;
             }
-            r += minRowsPerTile;
+            r = r_end;
         }
         return partitioning;
     }
@@ -325,8 +326,9 @@ namespace grids {
 
         size_t tile_rows = min(numTiles,
                                static_cast<size_t>(max((double) minRowsPerTile, ceil(sqrt(numTiles / aspect_ratio)))));
-        size_t tile_cols = min(numTiles,
+        size_t tile_cols = min(static_cast<size_t>( numTiles/tile_rows),
                                static_cast<size_t>(max((double) minColsPerTile, floor(numTiles / tile_rows))));
+        assert(tile_rows * tile_cols <= numTiles);
 
         auto nonwide_width = slice.width() / tile_cols;
         auto wide_width = nonwide_width + 1;
@@ -351,6 +353,7 @@ namespace grids {
                 assert(row_to <= slice.height());
                 assert(col_from < slice.width());
                 assert(col_to <= slice.width());
+                assert(tile < numTiles);
                 tileMapping.insert({PartitioningTarget{target.ipu(), tile},
                                     {{slice.rows().from() + row_from, slice.rows().from() + row_to},
                                      {slice.cols().from() + col_from, slice.cols().from() + col_to}}});
@@ -365,6 +368,7 @@ namespace grids {
                 assert(row_to <= slice.height());
                 assert(col_from < slice.width());
                 assert(col_to <= slice.width());
+                assert(tile < numTiles);
                 tileMapping.insert({PartitioningTarget{target.ipu(), tile},
                                     {{slice.rows().from() + row_from, slice.rows().from() + row_to},
                                      {slice.cols().from() + col_from, slice.cols().from() + col_to}}});
@@ -384,6 +388,7 @@ namespace grids {
                 assert(row_to <= slice.height());
                 assert(col_from < slice.width());
                 assert(col_to <= slice.width());
+                assert(tile < numTiles);
                 tileMapping.insert({PartitioningTarget{target.ipu(), tile},
                                     {{slice.rows().from() + row_from, slice.rows().from() + row_to},
                                      {slice.cols().from() + col_from, slice.cols().from() + col_to}}});
@@ -398,6 +403,7 @@ namespace grids {
                 assert(row_to <= slice.height());
                 assert(col_from < slice.width());
                 assert(col_to <= slice.width());
+                assert(tile < numTiles);
                 tileMapping.insert({PartitioningTarget{target.ipu(), tile},
                                     {{slice.rows().from() + row_from, slice.rows().from() + row_to},
                                      {slice.cols().from() + col_from, slice.cols().from() + col_to}}});
@@ -517,7 +523,7 @@ namespace grids {
         } else if (slice.height() < minRowsPerTile) {
             // We have something that's wide but not long, so chop it up by cols
             return shortAndWideTileStrategy(target, slice, numTiles, minColsPerTile);
-        } else if (slice.width() * slice.height() < numTiles * minColsPerTile * minRowsPerTile) {
+        } else if (ceil(slice.width() / (float) minColsPerTile) * ceil(slice.height() / (float) minRowsPerTile) < numTiles) {
             // We'll use tiles of 64x6
             return minSizeTileGridStrategy(target, slice, minRowsPerTile, minColsPerTile);
         } else {
@@ -552,6 +558,7 @@ namespace grids {
             auto newMappings = toTilePartitionsForSingleIpu(target, ipuSlice, numTiles,
                                                             minRowsPerTile, minColsPerTile);
             for (const auto &[newTarget, newTileSlice]: newMappings) {
+                assert(newTarget.tile() < numTiles);
                 result.insert({newTarget, newTileSlice});
             }
         }
