@@ -1,0 +1,176 @@
+thorbenl@IPU2AF8:/tmp/tmp.DGXYdBSa68/cmake-build-release/main$ for ipus in 1 2 4 8 16; do for run in 1 2 3 4 5; do ./low_level_stencil -n 1000 -i ../../images/cheese.png -o /tmp/cheese-blurred.png --num-ipus $ipus; done; done
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took      0.82877s
+Compiling graph took       5.3598s
+                                           Copying to device took     0.057139s
+                                  Running stencil iterations took      0.28424s
+                                             Copying to host took     0.017989s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       0.8084s
+Compiling graph took       5.2303s
+                                           Copying to device took     0.036356s
+                                  Running stencil iterations took      0.28423s
+                                             Copying to host took     0.014922s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took      0.81651s
+Compiling graph took       5.2256s
+                                           Copying to device took      0.03756s
+                                  Running stencil iterations took      0.28423s
+                                             Copying to host took     0.015068s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took      0.84061s
+Compiling graph took       5.1396s
+                                           Copying to device took      0.04573s
+                                  Running stencil iterations took      0.28421s
+                                             Copying to host took     0.017368s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took      0.81589s
+Compiling graph took       5.2241s
+                                           Copying to device took     0.055449s
+                                  Running stencil iterations took      0.28422s
+                                             Copying to host took     0.017729s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.0802s
+Compiling graph took       9.4127s
+                                           Copying to device took     0.034109s
+                                  Running stencil iterations took       0.1625s
+                                             Copying to host took     0.013241s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.0951s
+Compiling graph took       9.6785s
+                                           Copying to device took     0.052861s
+                                  Running stencil iterations took      0.16249s
+                                             Copying to host took      0.01596s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.0985s
+Compiling graph took       9.7073s
+                                           Copying to device took     0.054453s
+                                  Running stencil iterations took      0.16248s
+                                             Copying to host took     0.016007s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.0921s
+Compiling graph took       9.3444s
+                                           Copying to device took     0.033295s
+                                  Running stencil iterations took      0.16249s
+                                             Copying to host took      0.01302s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.0863s
+Compiling graph took       9.5819s
+                                           Copying to device took     0.040591s
+                                  Running stencil iterations took      0.16256s
+                                             Copying to host took     0.022034s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       1.5978s
+Compiling graph took       19.305s
+                                           Copying to device took     0.036835s
+                                  Running stencil iterations took     0.083145s
+                                             Copying to host took     0.017154s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       1.5947s
+Compiling graph took       19.327s
+                                           Copying to device took     0.035899s
+                                  Running stencil iterations took     0.083068s
+                                             Copying to host took     0.017208s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       1.5877s
+Compiling graph took       18.986s
+                                           Copying to device took     0.037422s
+                                  Running stencil iterations took     0.083299s
+                                             Copying to host took     0.017166s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       1.5945s
+Compiling graph took       19.268s
+                                           Copying to device took     0.036254s
+                                  Running stencil iterations took     0.083065s
+                                             Copying to host took     0.017113s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       1.5833s
+Compiling graph took        18.98s
+                                           Copying to device took     0.036378s
+                                  Running stencil iterations took     0.083075s
+                                             Copying to host took     0.016942s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       2.6308s
+Compiling graph took       38.861s
+                                           Copying to device took     0.024411s
+                                  Running stencil iterations took     0.052257s
+                                             Copying to host took     0.010791s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       2.6317s
+Compiling graph took       38.803s
+                                           Copying to device took     0.035868s
+                                  Running stencil iterations took     0.052233s
+                                             Copying to host took     0.010747s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       2.6478s
+Compiling graph took       38.907s
+                                           Copying to device took     0.026543s
+                                  Running stencil iterations took     0.052257s
+                                             Copying to host took     0.014714s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       2.6147s
+Compiling graph took         39.4s
+                                           Copying to device took     0.026708s
+                                  Running stencil iterations took     0.052266s
+                                             Copying to host took     0.010935s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took        2.628s
+Compiling graph took        39.35s
+                                           Copying to device took     0.027046s
+                                  Running stencil iterations took     0.052271s
+                                             Copying to host took     0.015021s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       4.3853s
+Compiling graph took       84.884s
+                                           Copying to device took     0.043597s
+                                  Running stencil iterations took     0.030125s
+                                             Copying to host took     0.011113s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       4.4018s
+Compiling graph took       82.574s
+                                           Copying to device took     0.042557s
+                                  Running stencil iterations took     0.030644s
+                                             Copying to host took     0.011615s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       4.4031s
+Compiling graph took       84.558s
+                                           Copying to device took     0.041759s
+                                  Running stencil iterations took       0.0303s
+                                             Copying to host took     0.011066s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took        4.389s
+Compiling graph took       84.287s
+                                           Copying to device took     0.042923s
+                                  Running stencil iterations took     0.030293s
+                                             Copying to host took     0.015019s
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       4.4907s
+Compiling graph took       84.254s
+                                           Copying to device took      0.04391s
+                                  Running stencil iterations took     0.030295s
+                                             Copying to host took     0.015326s
