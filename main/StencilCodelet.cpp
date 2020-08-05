@@ -414,6 +414,48 @@ template
 class GaussianNarrow1ColBlurCodelet<float>;
 
 
+template<typename T>
+class GaussianBlur1x1Codelet : public Vertex { // Extreme case of a 1x1 partition!
+
+public:
+    Input <Vector<T>> in;
+    Input <Vector<T>> nw, ne, sw, se;
+    Input <Vector<T>> n, s, w, e;
+    Output <Vector<T>> out;
+    Input<unsigned> width;
+    Input<unsigned> height; // Unused, but we want to keep the interface the same
+
+    bool compute() {
+        const auto ny = *height;
+        const auto nx = *width;
+        constexpr auto nc = NumChannels;
+
+//         Only works if this is at least a 1x2 block (excluding halos), and in must be same size as out
+        if (nx == 1 && ny > 1) {
+#pragma unroll 4
+                for (auto c = 0u; c < nc; c++) {
+                    const auto _nw = nw[c];
+                    const auto _w = w[c];
+                    const auto _sw = sw[c];
+                    const auto _n = n[c];
+                    const auto _m = in[c];
+                    const auto _s = s[c];
+                    const auto _ne = ne[c];
+                    const auto _e = e[c];
+                    const auto _se = se[c];
+                    out[c] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                }
+
+            return true;
+        }
+        return false;
+    }
+};
+
+template
+class GaussianBlur1x1Codelet<float>;
+
+
 
 //
 //

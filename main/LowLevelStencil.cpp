@@ -22,6 +22,8 @@ int main(int argc, char *argv[]) {
     std::string inputFilename, outputFilename;
     unsigned numIters = 1u;
     unsigned numIpus = 1u;
+    unsigned minRowsPerTile = 6u;
+    unsigned minColsPerTile = 6u;
     bool compileOnly = false;
     bool debug = false;
     bool useIpuModel = false;
@@ -33,6 +35,10 @@ int main(int argc, char *argv[]) {
             ("i,image", "filename input image (must be a 4-channel PNG image)",
              cxxopts::value<std::string>(inputFilename))
             ("num-ipus", "Number of IPUs to target (1,2,4,8 or 16)", cxxopts::value<unsigned>(numIpus))
+            ("min-rows-per-tile", "Min rows per tile (default 6)",
+             cxxopts::value<unsigned>(minRowsPerTile)->default_value(std::to_string(grids::DefaultMinRowsPerTile)))
+            ("min-cols-per-tile", "Min cols per tile (default 6)",
+             cxxopts::value<unsigned>(minColsPerTile)->default_value(std::to_string(grids::DefaultMinColsPerTile)))
             ("o,output", "filename output (blurred image)", cxxopts::value<std::string>(outputFilename))
             ("d,debug", "Run in debug mode (capture profiling information)")
             ("compile-only", "Only compile the graph and write to stencil_<width>x<height>.exe, don't run")
@@ -83,7 +89,8 @@ int main(int argc, char *argv[]) {
         std::cerr << "Couldn't fit the problem on the " << numIpus << " ipus." << std::endl;
         return EXIT_FAILURE;
     }
-    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getNumTiles());
+    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getNumTiles(), minRowsPerTile,
+                                                     minColsPerTile);
     auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings);
 
     for (const auto &[target, slice]: tileLevelMappings) {
@@ -127,7 +134,8 @@ int main(int argc, char *argv[]) {
         const auto vertexName = [_slice]() -> std::string {
             if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodelet<float>";
             else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodelet<float>";
-            else return "GaussianWide1RowBlurCodelet<float>";
+            else if (_slice.width() > 1) return "GaussianWide1RowBlurCodelet<float>";
+            else return "GaussianBlur1x1Codelet<float>";
         };
         auto v = graph.addVertex(inToOut,
                                  vertexName(),

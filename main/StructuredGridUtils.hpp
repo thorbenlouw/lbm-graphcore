@@ -324,10 +324,10 @@ namespace grids {
                               static_cast<double> (max(minRowsPerTile, slice.height()));
 
 
-        auto C_max = slice.width() / minColsPerTile;
-        auto R_max = slice.height() / minRowsPerTile;
-        size_t tile_cols = min(C_max * 1.0, ceil(sqrt(1216.0/aspect_ratio)));
-        size_t tile_rows = min(R_max, 1216/tile_cols);
+        auto C_max = min(numTiles, slice.width() / minColsPerTile);
+        auto R_max = min(numTiles, slice.height() / minRowsPerTile);
+        size_t tile_cols = min(C_max * 1.0, ceil(sqrt(numTiles * aspect_ratio)));
+        size_t tile_rows = min(R_max, numTiles/tile_cols);
         assert(tile_rows * tile_cols <= numTiles);
 
         auto nonwide_width = max(minColsPerTile, slice.width() / tile_cols);
@@ -523,7 +523,7 @@ namespace grids {
             // We have something that's wide but not long, so chop it up by cols
             return shortAndWideTileStrategy(target, slice, numTiles, minColsPerTile);
         } else if (ceil(slice.width() / (float) minColsPerTile) * ceil(slice.height() / (float) minRowsPerTile) < numTiles) {
-            // We'll use tiles of 64x6
+            // We'll use tiles of minRowsPerTile x minColsPerTile
             return minSizeTileGridStrategy(target, slice, minRowsPerTile, minColsPerTile);
         } else {
             // We'll try and use the best grid overlay we can
