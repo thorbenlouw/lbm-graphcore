@@ -166,31 +166,7 @@ namespace grids {
         return result;
     }
 
-    /**
-    * A problem size small enough to just put the minimum size grid on as many tiles as needed
-    */
-    auto minSizeTileGridStrategy(const PartitioningTarget target, const Slice2D slice,
-                                 const size_t minRowsPerTile = DefaultMinRowsPerTile,
-                                 const size_t minColsPerTile = DefaultMinColsPerTile) -> GridPartitioning {
-        auto r = 0u;
-        auto tile = 0u;
-        auto partitioning = GridPartitioning{};
-        while (r < slice.height()) {
-            auto r_end = min(r + minRowsPerTile, slice.height());
-            auto c = 0u;
-            while (c < slice.width()) {
-                auto c_end = min(c + minColsPerTile, slice.width());
-                assert(tile < DefaultNumTilesPerIpu);
-                partitioning.insert({PartitioningTarget{target.ipu(), tile},
-                                     {{r + slice.rows().from(), r_end + slice.rows().from()},
-                                      {c + slice.cols().from(), c_end + slice.cols().from()}}});
-                tile++;
-                c = c_end;
-            }
-            r = r_end;
-        }
-        return partitioning;
-    }
+
 
     /**
    * The number of cols is less than the minimum but there are many rows, so we chunk vertically, respecting
@@ -522,9 +498,7 @@ namespace grids {
         } else if (slice.height() < minRowsPerTile) {
             // We have something that's wide but not long, so chop it up by cols
             return shortAndWideTileStrategy(target, slice, numTiles, minColsPerTile);
-        } else if (ceil(slice.width() / (float) minColsPerTile) * ceil(slice.height() / (float) minRowsPerTile) < numTiles) {
-            // We'll use tiles of minRowsPerTile x minColsPerTile
-            return minSizeTileGridStrategy(target, slice, minRowsPerTile, minColsPerTile);
+
         } else {
             // We'll try and use the best grid overlay we can
             return generalTileGridStrategy(target, slice, numTiles, minRowsPerTile, minColsPerTile);

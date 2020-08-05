@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
     constexpr auto NumTiles = 1216;
     constexpr auto NumWorkers = 6;
 
-    std::cout << "numIpus,width,height,wastedTiles,wastedWorkers,loadBalance,maxSpeedup,aveBlockSize,largestBlockSize,aveTileBlockSize,largestTileBlockSize"
+    std::cout << "numIpus,width,height,wastedTiles,wastedWorkers,loadBalance,maxSpeedup,aveBlockSize,largestBlockSize,aveTileBlockSize,largestTileBlockSize,smallestTileBlockSize"
               << std::endl;
 
 
@@ -69,9 +69,11 @@ int main(int argc, char *argv[]) {
         }
 
         auto busiestTile = 0u;
+        auto smallestTileBlockSize = 1000*1000;
         for (const auto &[target, slice]: tileLevelMappings) {
             const auto busyness = slice.width() * slice.height();
             if (busyness > busiestTile) busiestTile = busyness;
+            if (busyness < smallestTileBlockSize) smallestTileBlockSize = busyness;
         }
 
         double loadBalanceTotal = 0.0;
@@ -87,21 +89,25 @@ int main(int argc, char *argv[]) {
         const double aveTileBlockSize = height * width / tileLevelMappings.size();
         const double largestWorkerBlockSize = busiestWorker;
         const double largestTileBlockSize = busiestTile;
+
         double maxSpeedup = ((double) width * height) / ((double) busiestWorker);
         std::cout << numIpus << "," << (int) width << "," << (int) height << "," << wasteTiles << "," << wasteWorkers
                   << ","
                   << aveLoadBalance << "," << maxSpeedup << "," << aveWorkerBlockSize << "," << largestWorkerBlockSize
                   <<
-                  "," << aveTileBlockSize << "," << largestTileBlockSize << std::endl;
+                  "," << aveTileBlockSize << "," << largestTileBlockSize << "," << smallestTileBlockSize << std::endl;
 
         return true;
     };
 
     if (sample) {
-        for (auto sampleNum = 0u; sampleNum < numSamples; sampleNum++) {
+        auto sampleNum = 0u;
+        while (sampleNum < numSamples) {
             auto height = rand() % (maxHeight - minHeight + 1) + minHeight;
             auto width = rand() % (maxWidth - minWidth + 1) + minWidth;
-            doSample(height, width);
+            if (doSample(height, width)) {
+                sampleNum++;
+            }
         }
     } else {
         for (double height = minHeight; height <= maxHeight; height += ((maxHeight - minHeight) / 200.0)) {

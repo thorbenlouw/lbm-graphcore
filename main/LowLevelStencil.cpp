@@ -89,10 +89,10 @@ int main(int argc, char *argv[]) {
         std::cerr << "Couldn't fit the problem on the " << numIpus << " ipus." << std::endl;
         return EXIT_FAILURE;
     }
-    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getNumTiles(), minRowsPerTile,
+    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getTilesPerIPU(), minRowsPerTile,
                                                      minColsPerTile);
     auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings);
-
+    grids::serializeToJson(tileLevelMappings, "partitions.json");
     for (const auto &[target, slice]: tileLevelMappings) {
         graph.setTileMapping(utils::applySlice(imgTensor, slice), target.virtualTile());
         graph.setTileMapping(utils::applySlice(tmpImgTensor, slice), target.virtualTile());
