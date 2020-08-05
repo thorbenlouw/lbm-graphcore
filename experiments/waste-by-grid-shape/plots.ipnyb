@@ -1,0 +1,146 @@
+import pandas as pd
+import numpy as np
+from matplotlib import pyplot as plt
+import seaborn as sns
+import matplotlib as mpl
+import matplotlib.ticker
+
+%matplotlib inline
+%config InlineBackend.figure_format='retina'
+
+mpl.rcParams['font.family'] = 'Optima'
+mpl.rcParams['text.usetex'] = 'False'
+
+df = pd.read_csv('/Users/thor/dev/lbm-graphcore/experiments/waste-by-grid-shape/mapping-efficiency.csv');
+df['wastedWorkersPerc'] = df.wastedWorkers/(6 * 1216)*100
+df.loadBalance.mean()
+
+fig, axs = plt.subplots(1,2, figsize=(16,6))
+sns.distplot( df.loadBalance, bins=100, kde=False, rug=False, hist=True, ax=axs[0]);
+sns.distplot(df.wastedWorkersPerc, bins=75, kde=False, rug=False, hist=True, ax=axs[1]);
+axs[0].set_xlabel('Load balance (%)',**{ 'fontsize': 16});
+axs[1].set_xlabel('Wasted worker threads (%)',**{ 'fontsize': 16});
+axs[0].set_ylabel('Frequency (of 20000 samples)',**{ 'fontsize': 16});
+axs[1].set_ylabel('Frequency (of 20000 samples)',**{ 'fontsize': 16});
+axs[0].set_title('Load balance histogram',**{ 'fontsize': 16});
+axs[1].set_title('Wasted worker thread histogram',**{ 'fontsize': 16});
+axs[0].grid()
+axs[1].grid()
+axs[0].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[0].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[1].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[1].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+
+fig.suptitle('1-IPU Tile/Worker mapping efficiency. Grid sizes 128x128 to 4000x4000, 20000 samples', **{ 'fontsize': 24})
+
+df2 = pd.read_csv('/tmp/mapping-efficiency16.csv');
+df2.head()
+df2['wastedWorkersPerc'] = df2.wastedWorkers/(6 * 1216 * 16)*100
+
+print("The % of cases where we achieve > 90% load balance (1-IPU): {}".format(df[df.loadBalance >= 90].shape[0]/ df.shape[0] * 100))
+print("The % of cases where we achieve > 90% load balance (16-IPU): {}".format(df2[df2.loadBalance >= 90].shape[0]/ df2.shape[0] * 100))
+print("The % of cases where we achieve > 75% load balance (1-IPU): {}".format(df[df.loadBalance >= 75].shape[0]/ df.shape[0] * 100))
+print("The % of cases where we achieve > 75% load balance (16-IPU): {}".format(df2[df2.loadBalance >= 75].shape[0]/ df2.shape[0] * 100))
+print("The % of cases where we waste  <5% of worker threads(1-IPU): {}".format(df[df.wastedWorkersPerc < 5].shape[0]/ df.shape[0] * 100))
+print("The % of cases where we waste  <5% of worker threads(16-IPU): {}".format(df2[df2.wastedWorkersPerc < 5].shape[0]/ df2.shape[0] * 100))
+print("The % of cases where we waste < 10% of worker threads(1-IPU): {}".format(df[df.wastedWorkersPerc < 10].shape[0]/ df.shape[0] * 100))
+print("The % of cases where we waste < 10% of worker threads(16-IPU): {}".format(df2[df2.wastedWorkersPerc < 10].shape[0]/ df2.shape[0] * 100))
+
+fig, axs = plt.subplots(1,2, figsize=(16,6))
+sns.distplot( df2.loadBalance, bins=100, kde=False, rug=False, hist=True, ax=axs[0]);
+sns.distplot(df2.wastedWorkersPerc, bins=75, kde=False, rug=False, hist=True, ax=axs[1]);
+axs[0].set_xlabel('Load balance (%)',**{ 'fontsize': 16});
+axs[1].set_xlabel('Wasted worker threads (%)',**{ 'fontsize': 16});
+axs[0].set_ylabel('Frequency (of 20000 samples)',**{ 'fontsize': 16});
+axs[1].set_ylabel('Frequency (of 20000 samples)',**{ 'fontsize': 16});
+axs[0].set_title('Load balance histogram',**{ 'fontsize': 16});
+axs[1].set_title('Wasted worker thread histogram',**{ 'fontsize': 16});
+axs[0].grid()
+axs[1].grid()
+axs[0].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[0].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[1].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[1].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+
+fig.suptitle('16-IPU Tile/Worker mapping efficiency. Grid sizes 2000x2000 to 20000x20000, 10000 samples', **{ 'fontsize': 24})
+fig, axs = plt.subplots(1,3, figsize=(18,5))
+
+df_loadBalance = df.groupby(['width','height'])['loadBalance'].mean().unstack()
+df_wastedworkers = df.groupby(['width','height'])['wastedWorkersPerc'].mean().unstack()
+df_maxParallel = df.groupby(['width','height'])['maxSpeedup'].mean().unstack()
+
+cmap = sns.dark_palette("#FFFFFF", as_cmap=True);
+cmap2 = sns.light_palette("#000000", as_cmap=True);
+
+sns.heatmap( df_loadBalance, ax=axs[0], vmin=0, vmax=100);
+sns.heatmap(df_wastedworkers, ax=axs[1], cmap=cmap2);
+sns.heatmap(df_maxParallel, ax=axs[2],  cbar_kws={'format': '%.0f%%'});
+
+axs[0].set_xlabel('Grid width',**{ 'fontsize': 16});
+axs[1].set_xlabel('Grid width',**{ 'fontsize': 16});
+axs[0].set_ylabel('Grid height',**{ 'fontsize': 16});
+axs[1].set_ylabel('Grid height',**{ 'fontsize': 16});
+axs[0].set_title('Load balance (%)',**{ 'fontsize': 16});
+axs[1].set_title('Wasted worker threads (%)',**{ 'fontsize': 16});
+axs[0].grid()
+axs[1].grid()
+axs[0].invert_yaxis()
+axs[1].invert_yaxis()
+axs[2].invert_yaxis()
+
+axs[0].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[0].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[1].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[1].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+
+fig.suptitle('1-IPU Tile/Worker mapping efficiency', **{ 'fontsize': 24})
+
+fig, axs = plt.subplots(1,3, figsize=(36,10))
+df_parEfficiency = (df2['maxSpeedup'] * (1216 * 16 * 6 - df['wastedWorkers']))
+
+df_loadBalance2 = df2.groupby(['width','height'])['loadBalance'].mean().unstack()
+df_wastedworkers2 = df2.groupby(['width','height'])['wastedWorkersPerc'].mean().unstack()
+df_maxParallel2 = df2.groupby(['width','height'])['maxSpeedup'].mean().unstack()
+
+cmap = sns.dark_palette("#FFFFFF", as_cmap=True);
+cmap2 = sns.light_palette("#000000", as_cmap=True);
+cpmap = sns.diverging_palette(240, 10, n=100)
+cpmap2 = sns.diverging_palette(110, 10, n=100)
+
+sns.heatmap( df_loadBalance2, ax=axs[0], cbar_kws={'format': '%.0f%%'});
+sns.heatmap(df_wastedworkers2, ax=axs[1],cmap=cmap2, cbar_kws={'format': '%.0f%%'});
+sns.heatmap(df_maxParallel2, ax=axs[2],  cbar_kws={'format': '%.0fx'});
+
+axs[0].set_xlabel('grid width',**{ 'fontsize': 16});
+axs[1].set_xlabel('grid width',**{ 'fontsize': 16});
+axs[2].set_xlabel('grid width',**{ 'fontsize': 16});
+
+axs[0].set_ylabel('grid height',**{ 'fontsize': 16});
+axs[1].set_ylabel('grid height',**{ 'fontsize': 16});
+axs[2].set_ylabel('grid height',**{ 'fontsize': 16});
+
+axs[0].set_title('Load balance (%)',**{ 'fontsize': 16});
+axs[1].set_title('Wasted worker threads (%)',**{ 'fontsize': 16});
+axs[2].set_title('Max achievable speedup',**{ 'fontsize': 16});
+
+
+axs[0].grid()
+axs[1].grid()
+axs[2].grid()
+
+axs[0].invert_yaxis()
+axs[1].invert_yaxis()
+axs[2].invert_yaxis()
+
+
+axs[0].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[0].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+
+axs[1].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[1].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+
+axs[2].tick_params(axis='x', which='both', labelleft=True, labelright=False, labelsize=14)
+axs[2].tick_params(axis='y', which='both', labelleft=True, labelright=False, labelsize=14)
+
+
+fig.suptitle('16-IPU Tile/Worker mapping efficiency', **{ 'fontsize': 24})

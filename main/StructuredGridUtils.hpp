@@ -324,18 +324,18 @@ namespace grids {
                               static_cast<double> (max(minRowsPerTile, slice.height()));
 
 
-        size_t tile_rows = min(numTiles,
-                               static_cast<size_t>(max((double) minRowsPerTile, ceil(sqrt(numTiles / aspect_ratio)))));
-        size_t tile_cols = min(static_cast<size_t>( numTiles/tile_rows),
-                               static_cast<size_t>(max((double) minColsPerTile, floor(numTiles / tile_rows))));
+        auto C_max = slice.width() / minColsPerTile;
+        auto R_max = slice.height() / minRowsPerTile;
+        size_t tile_cols = min(C_max * 1.0, ceil(sqrt(1216.0/aspect_ratio)));
+        size_t tile_rows = min(R_max, 1216/tile_cols);
         assert(tile_rows * tile_cols <= numTiles);
 
-        auto nonwide_width = slice.width() / tile_cols;
+        auto nonwide_width = max(minColsPerTile, slice.width() / tile_cols);
         auto wide_width = nonwide_width + 1;
         auto num_wide_cols = slice.width() - tile_cols * nonwide_width;
         auto num_nonwide_cols = (tile_cols > num_wide_cols) ? tile_cols - num_wide_cols : 0;
 
-        auto nontall_height = slice.height() / tile_rows;
+        auto nontall_height = max(minRowsPerTile, slice.height() / tile_rows);
         auto tall_height = nontall_height + 1;
         auto num_tall_rows = slice.height() - tile_rows * nontall_height;
         auto num_nontall_rows = (tile_rows > num_tall_rows) ? tile_rows - num_tall_rows : 0;
@@ -428,26 +428,11 @@ namespace grids {
         const auto tile = target.tile();
         GridPartitioning workerMappings = {};
 
-        const auto useShortAndWideStrategy = slice.width() >= slice.height() * numWorkersPerTile;
+        // How will work be more evenly split? By rows or by cols? We want most even (least imbalance)
+        float rowImbalance = (float) (slice.height() % numWorkersPerTile) / (float) slice.height();
+        float colImbalance = (float) (slice.width() % numWorkersPerTile) / (float) slice.width();
 
-        if (useShortAndWideStrategy) {
-            auto numWorkersToUse = min(slice.width(), numWorkersPerTile);
-
-            auto numColsPerWorker = (slice.width() / numWorkersToUse);
-            auto numWorkersWithExtra = slice.width() - (numWorkersToUse * numColsPerWorker);
-            auto c = slice.cols().from();
-            for (auto worker = 0ul; worker < numWorkersToUse; worker++) {
-                auto extra = worker < numWorkersWithExtra;
-                auto numCols = numColsPerWorker + extra;
-                assert(c < slice.cols().to());
-                assert(c + numCols <= slice.cols().to());
-
-                workerMappings.insert({PartitioningTarget{target.ipu(), tile, worker}, {
-                        {slice.rows().from(), slice.rows().to()}, {c, c + numCols}
-                }});
-                c += numCols;
-            }
-        } else {
+        if (rowImbalance <= colImbalance) {
             auto numWorkersToUse = min(slice.height(), numWorkersPerTile);
 
             auto numRowsPerWorker = (slice.height() / numWorkersToUse);
@@ -464,7 +449,25 @@ namespace grids {
                                                                                          slice.cols().to()}}});
                 r += numRows;
             }
+        } else  {
+            auto numWorkersToUse = min(slice.width(), numWorkersPerTile);
+
+            auto numColsPerWorker = (slice.width() / numWorkersToUse);
+            auto numWorkersWithExtra = slice.width() - (numWorkersToUse * numColsPerWorker);
+            auto c = slice.cols().from();
+            for (auto worker = 0ul; worker < numWorkersToUse; worker++) {
+                auto extra = worker < numWorkersWithExtra;
+                auto numCols = numColsPerWorker + extra;
+                assert(c < slice.cols().to());
+                assert(c + numCols <= slice.cols().to());
+
+                workerMappings.insert({PartitioningTarget{target.ipu(), tile, worker}, {
+                        {slice.rows().from(), slice.rows().to()}, {c, c + numCols}
+                }});
+                c += numCols;
+            }
         }
+
         return workerMappings;
     }
 
@@ -478,10 +481,6 @@ namespace grids {
                           size_t maxCellsPerIpu) -> optional<GridPartitioning> {
         // Lost cause! Too much data
         if (size.rows() * size.cols() > maxCellsPerIpu * numIpus) return nullopt;
-
-        // It all fits on one IPU - best we can do is keep it on one to minimise cost of exchange
-        if (size.cols() * size.rows() <= maxCellsPerIpu)
-            return {singleIpuStrategy(size)};
 
         // How will work be more evenly split? By rows or by cols? We want most even
         float rowImbalance = (float) (size.rows() % numIpus) / (float) size.rows();

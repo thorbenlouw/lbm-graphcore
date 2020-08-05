@@ -17,3 +17,21 @@ We run a stencil against a 2200x1122 grid where each cell uses 32 bytes. This pr
    the problem fits on fewer.
 
 But note the vastly increased compile times for more IPUs!
+
+Plotting
+-----
+```python
+df = pd.read_csv('experiments/should-i-use-all-ipus/results.csv')
+df = df.groupby('NumIpu').mean().reset_index()
+fig, ax = plt.subplots(1,1,figsize=(8,4))
+ax.plot(df.NumIpu, df.RunTime_s, 'x-', label='Run time (s)')
+ax.set_xlabel('Number of IPUs',**{ 'fontsize': 16})
+ax.set_ylabel('Run time(s)',**{ 'fontsize': 16})
+ax.set_xscale('log')
+ax.set_xticks([1,2,4,8,16])
+ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+ax.set_title('Runtime as  number of IPUs is increased',**{ 'fontsize': 24});
+ax.grid()
+plt.tight_layout()
+```
+
