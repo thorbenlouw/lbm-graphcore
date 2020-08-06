@@ -16,20 +16,26 @@ T stencil(const T nw, const T n, const T ne, const T w, const T m,
     return 1.f / 16 * (nw + ne + sw + se) + 4.f / 16 * m + 2.f / 16 * (e + w + s + n);
 }
 
+float2 stencil(const float2 nw, const float2 n, const float2 ne, const float2 w, const float2 m,
+               const float2 e, const float2 sw,
+               const float2 s, const float2 se) {
+    return 1.f / 16 * (nw + ne + sw + se) + 4.f / 16 * m + 2.f / 16 * (e + w + s + n);
+}
+
 template<typename T>
 class GaussianBlurCodelet : public Vertex {
 
 public:
-    Input <Vector<T>> in;
-    Input <Vector<T>> nw, ne, sw, se;
-    Input <Vector<T>> n, s, w, e;
-    Output <Vector<T>> out;
-    Input<unsigned> width;
-    Input<unsigned> height;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> in;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> nw, ne, sw, se;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> n, s, w, e;
+    Output <Vector<T,VectorLayout::ONE_PTR, 8>> out;
+    unsigned width;
+    unsigned height;
 
     bool compute() {
-        const auto nx = *width;
-        const auto ny = *height;
+        const auto nx = width;
+        const auto ny = height;
         const auto nc = 4;
 
 //         Only works if this is at least a 3x3 block (excluding halos), and in must be same size as out
@@ -43,7 +49,7 @@ public:
                     const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
                     const auto _nw = nw[c];
                     const auto _w = w[c];
-                    const auto _sw = w[NumChannels * (nx * (y + 0) + (x + 0)) + c];
+                    const auto _sw = w[c + NumChannels];
                     const auto _n = n[c];
                     const auto _m = in[idx];
                     const auto _s = in[NumChannels * (nx * (y + 1) + (x + 0)) + c];
@@ -228,6 +234,230 @@ public:
     }
 };
 
+
+class GaussianBlurCodeletFloat2 : public Vertex {
+
+public:
+    Input <Vector<float,VectorLayout::ONE_PTR, 8>> in;
+    Input <Vector<float,VectorLayout::ONE_PTR, 8>> nw, ne, sw, se;
+    Input <Vector<float,VectorLayout::ONE_PTR, 8>> n, s, w, e;
+    Output <Vector<float,VectorLayout::ONE_PTR, 8>> out;
+    unsigned width;
+    unsigned height;
+
+    bool compute() {
+        const auto nx = width;
+        const auto ny = height;
+        const auto nc = 4;
+
+//         Only works if this is at least a 3x3 block (excluding halos), and in must be same size as out
+        if (nx > 1 && ny > 1) {
+            // top left
+            {
+                constexpr auto x = 0u;
+                constexpr auto y = 0u;
+
+#define AS_F2(X)    reinterpret_cast<float2 *>(&X[0])
+#define IDX(R,C)    NumChannels * (nx * (y + R) + (x + C)) + c
+#define F2_IDX(R,C) 2 * (nx * (y + R) + (x + C)) + c
+
+                const auto f2in = AS_F2(in);
+                auto f2out = AS_F2(out);
+                for (auto c = 0u; c < nc/2; c++) {
+                    const auto idx = F2_IDX(0,0);
+                    const auto _nw = AS_F2(nw)[c];
+                    const auto _w = AS_F2(w)[c];
+                    const auto _sw = AS_F2(w)[F2_IDX(0,0)];
+                    const auto _n = AS_F2(n)[c];
+                    const auto _m = f2in[idx];
+                    const auto _s = f2in[F2_IDX(1,0)];
+                    const auto _ne = AS_F2(n)[c + 2];
+                    const auto _e = f2in[F2_IDX(0,1)];
+                    const auto _se = f2in[F2_IDX(1,1)];
+                    f2out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                }
+            }
+
+            // top
+            {
+                constexpr auto y = 0u;
+#pragma unroll 2
+                for (auto x = 1u; x < nx - 1; x++) {
+#pragma unroll 4
+                    for (auto c = 0; c < nc; c++) {
+                        const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
+                        const auto _nw = n[NumChannels * (x - 1) + c];
+                        const auto _w = in[NumChannels * (nx * (y + 0) + (x - 1)) + c];
+                        const auto _sw = in[NumChannels * (nx * (y + 1) + (x - 1)) + c];
+                        const auto _n = n[NumChannels * (x + 0) + c];
+                        const auto _m = in[idx];
+                        const auto _s = in[NumChannels * (nx * (y + 1) + (x + 0)) + c];
+                        const auto _ne = n[NumChannels * (x + 1) + c];
+                        const auto _e = in[NumChannels * (nx * (y + 0) + (x + 1)) + c];
+                        const auto _se = in[NumChannels * (nx * (y + 1) + (x + 1)) + c];
+                        out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                    }
+                }
+            }
+
+            // top right
+            {
+                const auto x = nx - 1u;
+                constexpr auto y = 0u;
+#pragma unroll 4
+                for (auto c = 0; c < nc; c++) {
+                    const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
+                    const auto _nw = n[NumChannels * (x - 1) + c];
+                    const auto _w = in[NumChannels * (nx * (y + 0) + (x - 1)) + c];
+                    const auto _sw = in[NumChannels * (nx * (y + 1) + (x - 1)) + c];
+                    const auto _n = n[NumChannels * (x + 0) + c];
+                    const auto _m = in[idx];
+                    const auto _s = in[NumChannels * (nx * (y + 1) + (x + 0)) + c];
+                    const auto _ne = ne[c];
+                    const auto _e = e[NumChannels * (y + 0) + c];
+                    const auto _se = e[NumChannels * (y + 1) + c];
+                    out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                }
+            }
+
+            // left col
+            {
+                constexpr auto x = 0u;
+#pragma unroll 2
+                for (auto y = 1; y < ny - 1; y++) {
+#pragma unroll 4
+                    for (auto c = 0; c < nc; c++) {
+                        const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
+                        const auto _nw = w[NumChannels * (y - 1) + c];
+                        const auto _w = w[NumChannels * (y + 0) + c];
+                        const auto _sw = w[NumChannels * (y + 1) + c];
+                        const auto _n = in[NumChannels * (nx * (y - 1) + (x + 0)) + c];
+                        const auto _m = in[idx];
+                        const auto _s = in[NumChannels * (nx * (y + 1) + (x + 0)) + c];
+                        const auto _ne = in[NumChannels * (nx * (y - 1) + (x + 1)) + c];
+                        const auto _e = in[NumChannels * (nx * (y + 0) + (x + 1)) + c];
+                        const auto _se = in[NumChannels * (nx * (y + 1) + (x + 1)) + c];
+                        out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                    }
+                }
+            }
+
+
+
+
+            const auto f2in = AS_F2(in);
+            auto f2out = AS_F2(out);
+
+            // middle block
+            for (auto y = 1; y < ny - 1; y++) {
+#pragma unroll 2
+                for (auto x = 1; x < nx - 1; x++) {
+                    for (auto c = 0u; c < nc/2; c++) {
+                        const auto idx = F2_IDX(0,0);
+                        const auto _nw = f2in[F2_IDX(-1,-1)];
+                        const auto _w = f2in[F2_IDX(0,-1)];
+                        const auto _sw = f2in[F2_IDX(+1,-1)];
+                        const auto _n = f2in[F2_IDX(-1,-0)];
+                        const auto _m = f2in[idx];
+                        const auto _s = f2in[F2_IDX(+1,0)];
+                        const auto _ne = f2in[F2_IDX(+1,+1)];
+                        const auto _e = f2in[F2_IDX(0,+1)];
+                        const auto _se = f2in[F2_IDX(-1,+1)];
+                        f2out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                    }
+                }
+            }
+
+            // right col
+            {
+                const auto x = nx - 1u;
+#pragma unroll 2
+                for (auto y = 1; y < ny - 1u; y++) {
+#pragma unroll 4
+                    for (auto c = 0; c < nc; c++) {
+                        const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
+                        const auto _nw = in[NumChannels * (nx * (y - 1) + (x - 1)) + c];
+                        const auto _w = in[NumChannels * (nx * (y + 0) + (x - 1)) + c];
+                        const auto _sw = in[NumChannels * (nx * (y + 1) + (x - 1)) + c];
+                        const auto _n = in[NumChannels * (nx * (y - 1) + (x + 0)) + c];
+                        const auto _m = in[idx];
+                        const auto _s = in[NumChannels * (nx * (y + 1) + (x + 0)) + c];
+                        const auto _ne = e[NumChannels * (y - 1) + c];
+                        const auto _e = e[NumChannels * (y + 0) + c];
+                        const auto _se = e[NumChannels * (y + 1) + c];
+                        out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                    }
+                }
+            }
+
+            // bottom left
+            {
+                const auto y = ny - 1;
+                constexpr auto x = 0u;
+#pragma unroll 4
+                for (auto c = 0; c < nc; c++) {
+                    const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
+                    const auto _nw = w[NumChannels * (y - 1) + c];
+                    const auto _w = w[NumChannels * (y + 0) + c];
+                    const auto _sw = sw[c];
+                    const auto _n = in[NumChannels * (nx * (y - 1) + (x + 0)) + c];
+                    const auto _m = in[idx];
+                    const auto _s = s[NumChannels * (x + 0) + c];
+                    const auto _ne = in[NumChannels * (nx * (y - 1) + (x + 1)) + c];
+                    const auto _e = in[NumChannels * (nx * (y + 0) + (x + 1)) + c];
+                    const auto _se = s[NumChannels * (x + 1) + c];
+                    out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                }
+            }
+
+            // bottom
+            {
+                const auto y = ny - 1;
+#pragma unroll 2
+                for (auto x = 1u; x < nx - 1u; x++) {
+#pragma unroll 4
+                    for (auto c = 0; c < nc; c++) {
+                        const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
+                        const auto _nw = in[NumChannels * (nx * (y - 1) + (x - 1)) + c];
+                        const auto _w = in[NumChannels * (nx * (y + 0) + (x - 1)) + c];
+                        const auto _sw = s[NumChannels * (x - 1) + c];
+                        const auto _n = in[NumChannels * (nx * (y - 1) + (x + 0)) + c];
+                        const auto _m = in[idx];
+                        const auto _s = s[NumChannels * (x + 0) + c];
+                        const auto _ne = in[NumChannels * (nx * (y - 1) + (x + 1)) + c];
+                        const auto _e = in[NumChannels * (nx * (y + 0) + (x + 1)) + c];
+                        const auto _se = s[NumChannels * (x + 1) + c];
+                        out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                    }
+                }
+            }
+
+            // bottom right
+            {
+                const auto y = ny - 1;
+                const auto x = nx - 1;
+#pragma unroll 4
+                for (auto c = 0; c < nc; c++) {
+                    const auto idx = NumChannels * (nx * (y + 0) + (x + 0)) + c;
+                    const auto _nw = in[NumChannels * (nx * (y - 1) + (x - 1)) + c];
+                    const auto _w = in[NumChannels * (nx * (y + 0) + (x - 1)) + c];
+                    const auto _sw = s[NumChannels * (x - 1) + c];
+                    const auto _n = in[NumChannels * (nx * (y - 1) + (x + 0)) + c];
+                    const auto _m = in[idx];
+                    const auto _s = s[NumChannels * (x + 0) + c];
+                    const auto _ne = e[NumChannels * (y - 1) + c];
+                    const auto _e = e[NumChannels * (y + 0) + c];
+                    const auto _se = se[c];
+                    out[idx] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+};
+
+
 template
 class GaussianBlurCodelet<float>;
 
@@ -236,19 +466,19 @@ template<typename T>
 class GaussianWide1RowBlurCodelet : public Vertex {
 
 public:
-    Input <Vector<T>> in;
-    Input <Vector<T>> nw, ne, sw, se;
-    Input <Vector<T>> n, s, w, e;
-    Output <Vector<T>> out;
-    Input<unsigned> width;
-    Input<unsigned> height; // Unused, but we want to keep the interface the same
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> in;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> nw, ne, sw, se;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> n, s, w, e;
+    Output <Vector<T,VectorLayout::ONE_PTR, 8>> out;
+    unsigned width;
+    unsigned height; // Unused, but we want to keep the interface the same
 
     bool compute() {
-        const auto nx = *width;
+        const auto nx = width;
         constexpr auto nc = NumChannels;
 
 //         Only works if this is at least a 1x2 block (excluding halos), and in must be same size as out
-        if (*height == 1 && nx > 1) {
+        if (height == 1 && nx > 1) {
             // Left
             {
 #pragma unroll 4
@@ -325,19 +555,19 @@ template<typename T>
 class GaussianNarrow1ColBlurCodelet : public Vertex {
 
 public:
-    Input <Vector<T>> in;
-    Input <Vector<T>> nw, ne, sw, se;
-    Input <Vector<T>> n, s, w, e;
-    Output <Vector<T>> out;
-    Input<unsigned> width;
-    Input<unsigned> height; // Unused, but we want to keep the interface the same
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> in;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> nw, ne, sw, se;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> n, s, w, e;
+    Output <Vector<T,VectorLayout::ONE_PTR, 8>> out;
+    unsigned width;
+    unsigned height; // Unused, but we want to keep the interface the same
 
     bool compute() {
-        const auto ny = *height;
+        const auto ny = height;
         constexpr auto nc = NumChannels;
 
 //         Only works if this is at least a 1x2 block (excluding halos), and in must be same size as out
-        if (*width == 1 && ny > 1) {
+        if (width == 1 && ny > 1) {
             // Top
             {
 #pragma unroll 4
@@ -418,16 +648,16 @@ template<typename T>
 class GaussianBlur1x1Codelet : public Vertex { // Extreme case of a 1x1 partition!
 
 public:
-    Input <Vector<T>> in;
-    Input <Vector<T>> nw, ne, sw, se;
-    Input <Vector<T>> n, s, w, e;
-    Output <Vector<T>> out;
-    Input<unsigned> width;
-    Input<unsigned> height; // Unused, but we want to keep the interface the same
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> in;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> nw, ne, sw, se;
+    Input <Vector<T,VectorLayout::ONE_PTR, 8>> n, s, w, e;
+    Output <Vector<T,VectorLayout::ONE_PTR, 8>> out;
+    unsigned width;
+    unsigned height; // Unused, but we want to keep the interface the same
 
     bool compute() {
-        const auto ny = *height;
-        const auto nx = *width;
+        const auto ny = height;
+        const auto nx = width;
         constexpr auto nc = NumChannels;
 
 //         Only works if this is at least a 1x2 block (excluding halos), and in must be same size as out

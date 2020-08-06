@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
         auto se = applyOrZero(halos.bottomRight, imgTensor);
         const auto _slice = slice;
         const auto vertexName = [_slice]() -> std::string {
-            if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodelet<float>";
+            if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodeletFloat2";
             else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodelet<float>";
             else if (_slice.width() > 1) return "GaussianWide1RowBlurCodelet<float>";
             else return "GaussianBlur1x1Codelet<float>";
@@ -140,8 +140,6 @@ int main(int argc, char *argv[]) {
         auto v = graph.addVertex(inToOut,
                                  vertexName(),
                                  {
-                                         {"width",  slice.width()},
-                                         {"height", slice.height()},
                                          {"in",     utils::applySlice(imgTensor, slice)},
                                          {"out",    utils::applySlice(tmpImgTensor, slice)},
                                          {"n",      n},
@@ -154,6 +152,8 @@ int main(int argc, char *argv[]) {
                                          {"se",     se},
                                  }
         );
+        graph.setInitialValue(v["width"], slice.width());
+        graph.setInitialValue(v["height"], slice.height());
         graph.setCycleEstimate(v, 100);
         graph.setTileMapping(v, target.virtualTile());
         n = applyOrZero(halos.top, tmpImgTensor, slice.width());
@@ -167,8 +167,6 @@ int main(int argc, char *argv[]) {
         v = graph.addVertex(outToIn,
                             vertexName(),
                             {
-                                    {"width",  slice.width()},
-                                    {"height", slice.height()},
                                     {"out",    utils::applySlice(imgTensor, slice)},
                                     {"in",     utils::applySlice(tmpImgTensor, slice)},
                                     {"n",      n},
@@ -181,6 +179,8 @@ int main(int argc, char *argv[]) {
                                     {"se",     se},
                             }
         );
+        graph.setInitialValue(v["width"], slice.width());
+        graph.setInitialValue(v["height"], slice.height());
         graph.setCycleEstimate(v, 100);
         graph.setTileMapping(v, target.virtualTile());
     }
