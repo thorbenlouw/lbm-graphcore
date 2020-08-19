@@ -29,6 +29,11 @@ const auto vertexName(const grids::Slice2D _slice, const std::string dataType) -
         else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodeletFloat2";
         else if (_slice.width() > 1) return "GaussianWide1RowBlurCodeletFloat2";
         else return "GaussianBlur1x1CodeletFloat2";
+    } else if (dataType == "half4") {
+        if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodeletHalf4";
+        else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodeletHalf4";
+        else if (_slice.width() > 1) return "GaussianWide1RowBlurCodeletHalf4";
+        else return "GaussianBlur1x1CodeletHalf4";
     }
     return "unknown";
 };
@@ -94,11 +99,12 @@ int main(int argc, char *argv[]) {
         const auto width = fImage.width;
         float16DataBuf = new uint16_t[width * height * NumChannels];
 
-#pragma omp parallel for  default(none) shared(img,float16DataBuf)  schedule(static, 4) collapse(3)
+#pragma omp parallel for  default(none) shared(img, float16DataBuf)  schedule(static, 4) collapse(3)
         for (auto y = 0u; y < height; y++) {
             for (auto x = 0u; x < width; x++) {
                 for (auto c = 0u; c < NumChannels; c++) {
-                    float16DataBuf[(y * width + x) * NumChannels + c] = popfloat::experimental::singleToHalf(img[(y * width + x) * NumChannels + c]);
+                    float16DataBuf[(y * width + x) * NumChannels + c] = popfloat::experimental::singleToHalf(
+                            img[(y * width + x) * NumChannels + c]);
                 }
             }
         }
@@ -309,7 +315,8 @@ int main(int argc, char *argv[]) {
         for (auto y = 0u; y < height; y++) {
             for (auto x = 0u; x < width; x++) {
                 for (auto c = 0u; c < NumChannels; c++) {
-                    img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(float16DataBuf[(y * width + x) * NumChannels + c]) ;
+                    img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(
+                            float16DataBuf[(y * width + x) * NumChannels + c]);
                 }
             }
         }
@@ -318,8 +325,6 @@ int main(int argc, char *argv[]) {
     }
 
     auto cImg = toCharImage(stripPadding(fImage));
-
-
 
 
     if (!savePng(cImg, outputFilename)) {
