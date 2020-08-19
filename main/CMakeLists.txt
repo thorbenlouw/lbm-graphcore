@@ -105,6 +105,7 @@ target_link_libraries(poplibs_stencil
 target_link_libraries(low_level_stencil
         poplar
         poputil
+        popfloat
         )
 
 
@@ -117,5 +118,6 @@ install(TARGETS lbm DESTINATION bin)
 install(TARGETS lbm_with_kernels DESTINATION bin)
 
 configure_file(codelets/D2Q9Codelets.cpp codelets/D2Q9Codelets.cpp COPYONLY)
-configure_file(codelets/StencilCodelet.cpp codelets/StencilCodelet.cpp COPYONLY)
+configure_file(codelets/GaussianBlurCodelets.cpp codelets/GaussianBlurCodelets.cpp COPYONLY)
 configure_file(codelets/HaloRegionApproachesCodelets.cpp codelets/HaloRegionApproachesCodelets.cpp COPYONLY)
+configure_file(codelets/GaussianBlurCodeletsVectorised.cpp codelets/GaussianBlurCodeletsVectorised.cpp COPYONLY)

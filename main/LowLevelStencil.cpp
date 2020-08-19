@@ -12,10 +12,26 @@
 #include <iostream>
 #include <poplar/Program.hpp>
 #include <poplar/Engine.hpp>
+#include <popfloat/experimental/CastToHalf.hpp> // for halfToSingle and singleToHalf
 
 #include <sstream>
 
 using namespace stencil;
+
+const auto vertexName(const grids::Slice2D _slice, const std::string dataType) -> std::string {
+    if (dataType == "float") {
+        if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodelet<float>";
+        else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodelet<float>";
+        else if (_slice.width() > 1) return "GaussianWide1RowBlurCodelet<float>";
+        else return "GaussianBlur1x1Codelet<float>";
+    } else if (dataType == "float2") {
+        if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodeletFloat2";
+        else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodeletFloat2";
+        else if (_slice.width() > 1) return "GaussianWide1RowBlurCodeletFloat2";
+        else return "GaussianBlur1x1CodeletFloat2";
+    }
+    return "unknown";
+};
 
 
 int main(int argc, char *argv[]) {
@@ -27,6 +43,8 @@ int main(int argc, char *argv[]) {
     bool compileOnly = false;
     bool debug = false;
     bool useIpuModel = false;
+    std::string dataType = "float";
+
 
     cxxopts::Options options(argv[0],
                              " - Runs a 3x3 Gaussian Blur stencil over an input image a number of times using Poplibs on the IPU");
@@ -39,6 +57,8 @@ int main(int argc, char *argv[]) {
              cxxopts::value<unsigned>(minRowsPerTile)->default_value(std::to_string(grids::DefaultMinRowsPerTile)))
             ("min-cols-per-tile", "Min cols per tile (default 6)",
              cxxopts::value<unsigned>(minColsPerTile)->default_value(std::to_string(grids::DefaultMinColsPerTile)))
+            ("data-type", "Data type (float, float2, half4)",
+             cxxopts::value<string>(dataType)->default_value("float"))
             ("o,output", "filename output (blurred image)", cxxopts::value<std::string>(outputFilename))
             ("d,debug", "Run in debug mode (capture profiling information)")
             ("compile-only", "Only compile the graph and write to stencil_<width>x<height>.exe, don't run")
@@ -65,31 +85,50 @@ int main(int argc, char *argv[]) {
 
     cout << inputFilename << " is " << maybeImg->width << "x" << maybeImg->height << " pixels in size." << std::endl;
 
-    auto tmp_img = std::make_unique<float[]>((maybeImg->width) * (maybeImg->height) * NumChannels);
     auto fImage = zeroPad(toFloatImage(*maybeImg));
-    auto img = fImage.intensities.data();
+    auto img = fImage.intensities.data(); // TODO still have to get this working with float4s!
+    void *dataBuf = img; // the float case
+    uint16_t *float16DataBuf = nullptr;
+    if (dataType == "half" || dataType == "half4") {
+        const auto height = fImage.height;
+        const auto width = fImage.width;
+        float16DataBuf = new uint16_t[width * height * NumChannels];
+
+#pragma omp parallel for  default(none) shared(img,float16DataBuf)  schedule(static, 4) collapse(3)
+        for (auto y = 0u; y < height; y++) {
+            for (auto x = 0u; x < width; x++) {
+                for (auto c = 0u; c < NumChannels; c++) {
+                    float16DataBuf[(y * width + x) * NumChannels + c] = popfloat::experimental::singleToHalf(img[(y * width + x) * NumChannels + c]);
+                }
+            }
+        }
+        dataBuf = float16DataBuf;
+    }
 
     auto device = useIpuModel ? utils::getIpuModel(numIpus) : utils::getIpuDevice(numIpus);
 
     std::cout << "Building graph";
     auto tic = std::chrono::high_resolution_clock::now();
     auto graph = poplar::Graph(*device);
-    graph.addCodelets("StencilCodelet.cpp");
+    auto poplarType = dataType == "half4" ? HALF : FLOAT;
+    graph.addCodelets("codelets/GaussianBlurCodelets.cpp");
+    graph.addCodelets("codelets/GaussianBlurCodeletsVectorised.cpp");
 
-    const auto inImg = graph.addHostToDeviceFIFO(">>img", FLOAT,
+    const auto inImg = graph.addHostToDeviceFIFO(">>img", poplarType,
                                                  NumChannels * fImage.height * fImage.width);
-    const auto outImg = graph.addDeviceToHostFIFO("<<img", FLOAT,
+    const auto outImg = graph.addDeviceToHostFIFO("<<img", poplarType,
                                                   NumChannels * fImage.height * fImage.width);
 
-    auto imgTensor = graph.addVariable(FLOAT, {fImage.height, fImage.width, NumChannels}, "img");
-    auto tmpImgTensor = graph.addVariable(FLOAT, {fImage.height, fImage.width, NumChannels}, "tmpImg");
+    auto imgTensor = graph.addVariable(poplarType, {fImage.height, fImage.width, NumChannels}, "img");
+    auto tmpImgTensor = graph.addVariable(poplarType, {fImage.height, fImage.width, NumChannels}, "tmpImg");
 
     auto ipuLevelMappings = grids::partitionForIpus({fImage.height, fImage.width}, numIpus, 2000 * 1400);
     if (!ipuLevelMappings.has_value()) {
         std::cerr << "Couldn't fit the problem on the " << numIpus << " ipus." << std::endl;
         return EXIT_FAILURE;
     }
-    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getTilesPerIPU(), minRowsPerTile,
+    auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getTilesPerIPU(),
+                                                     minRowsPerTile,
                                                      minColsPerTile);
     auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings);
     grids::serializeToJson(tileLevelMappings, "partitions.json");
@@ -105,22 +144,21 @@ int main(int argc, char *argv[]) {
         // Halos top-left = (0,0) and no wraparound
         const auto halos = grids::Halos::forSliceTopIs0NoWrap(slice, {fImage.height, fImage.width});
 
-        const auto maybeZerosVector = std::optional<Tensor>{};
-        const auto maybeZeroScalar = std::optional<Tensor>{};
+        const auto maybeZerosVector = std::optional < Tensor > {};
+        const auto maybeZeroScalar = std::optional < Tensor > {};
 
         const auto _target = target;
-        const auto applyOrZero = [&graph, &_target, &zeros](const std::optional<grids::Slice2D> maybeSlice,
-                                                            Tensor &tensor,
-                                                            const unsigned borderSize = 1u) -> Tensor {
+        const auto applyOrZero = [&graph, &_target, &zeros, poplarType](const std::optional <grids::Slice2D> maybeSlice,
+                                                                        Tensor &tensor,
+                                                                        const unsigned borderSize = 1u) -> Tensor {
             if (maybeSlice.has_value()) {
                 return utils::applySlice(tensor, *maybeSlice);
             } else {
-                const auto zerosVector = graph.addConstant(FLOAT, {borderSize * 4}, zeros.data(), "{0...}");
+                const auto zerosVector = graph.addConstant(poplarType, {borderSize * 4}, zeros.data(), "{0...}");
                 graph.setTileMapping(zerosVector, _target.virtualTile());
                 return zerosVector;
             }
         };
-
 
         auto n = applyOrZero(halos.top, imgTensor, slice.width());
         auto s = applyOrZero(halos.bottom, imgTensor, slice.width());
@@ -130,26 +168,20 @@ int main(int argc, char *argv[]) {
         auto ne = applyOrZero(halos.topRight, imgTensor);
         auto sw = applyOrZero(halos.bottomLeft, imgTensor);
         auto se = applyOrZero(halos.bottomRight, imgTensor);
-        const auto _slice = slice;
-        const auto vertexName = [_slice]() -> std::string {
-            if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodeletFloat2";
-            else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodelet<float>";
-            else if (_slice.width() > 1) return "GaussianWide1RowBlurCodelet<float>";
-            else return "GaussianBlur1x1Codelet<float>";
-        };
+
         auto v = graph.addVertex(inToOut,
-                                 vertexName(),
+                                 vertexName(slice, dataType),
                                  {
-                                         {"in",     utils::applySlice(imgTensor, slice)},
-                                         {"out",    utils::applySlice(tmpImgTensor, slice)},
-                                         {"n",      n},
-                                         {"s",      s},
-                                         {"e",      e},
-                                         {"w",      w},
-                                         {"nw",     nw},
-                                         {"sw",     sw},
-                                         {"ne",     ne},
-                                         {"se",     se},
+                                         {"in",  utils::applySlice(imgTensor, slice)},
+                                         {"out", utils::applySlice(tmpImgTensor, slice)},
+                                         {"n",   n},
+                                         {"s",   s},
+                                         {"e",   e},
+                                         {"w",   w},
+                                         {"nw",  nw},
+                                         {"sw",  sw},
+                                         {"ne",  ne},
+                                         {"se",  se},
                                  }
         );
         graph.setInitialValue(v["width"], slice.width());
@@ -165,18 +197,18 @@ int main(int argc, char *argv[]) {
         sw = applyOrZero(halos.bottomLeft, tmpImgTensor);
         se = applyOrZero(halos.bottomRight, tmpImgTensor);
         v = graph.addVertex(outToIn,
-                            vertexName(),
+                            vertexName(slice, dataType),
                             {
-                                    {"out",    utils::applySlice(imgTensor, slice)},
-                                    {"in",     utils::applySlice(tmpImgTensor, slice)},
-                                    {"n",      n},
-                                    {"s",      s},
-                                    {"e",      e},
-                                    {"w",      w},
-                                    {"nw",     nw},
-                                    {"sw",     sw},
-                                    {"ne",     ne},
-                                    {"se",     se},
+                                    {"out", utils::applySlice(imgTensor, slice)},
+                                    {"in",  utils::applySlice(tmpImgTensor, slice)},
+                                    {"n",   n},
+                                    {"s",   s},
+                                    {"e",   e},
+                                    {"w",   w},
+                                    {"nw",  nw},
+                                    {"sw",  sw},
+                                    {"ne",  ne},
+                                    {"se",  se},
                             }
         );
         graph.setInitialValue(v["width"], slice.width());
@@ -190,13 +222,13 @@ int main(int argc, char *argv[]) {
     auto copyToDevice = Copy(inImg, imgTensor);
     auto copyBackToHost = Copy(imgTensor, outImg);
 
-    const auto programs = std::vector<Program>{copyToDevice,
-                                               Repeat(numIters, stencilProgram),
-                                               copyBackToHost};
+    const auto programs = std::vector < Program > {copyToDevice,
+                                                   Repeat(numIters, stencilProgram),
+                                                   copyBackToHost};
 
 
     auto toc = std::chrono::high_resolution_clock::now();
-    auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+    auto diff = std::chrono::duration_cast < std::chrono::duration < double >> (toc - tic).count();
     std::cout << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" <<
               std::endl;
 
@@ -223,7 +255,7 @@ int main(int argc, char *argv[]) {
         auto exe = poplar::compileGraph(graph, programs, debug ? utils::POPLAR_ENGINE_OPTIONS_DEBUG
                                                                : utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
         toc = std::chrono::high_resolution_clock::now();
-        diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        diff = std::chrono::duration_cast < std::chrono::duration < double >> (toc - tic).count();
         std::cout << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" <<
                   std::endl;
 
@@ -240,13 +272,13 @@ int main(int argc, char *argv[]) {
                              utils::POPLAR_ENGINE_OPTIONS_DEBUG);
 
         toc = std::chrono::high_resolution_clock::now();
-        diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        diff = std::chrono::duration_cast < std::chrono::duration < double >> (toc - tic).count();
         std::cout << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" <<
                   std::endl;
 
 
-        engine.connectStream(">>img", img);
-        engine.connectStream("<<img", img);
+        engine.connectStream(">>img", dataBuf);
+        engine.connectStream("<<img", dataBuf);
 
         engine.load(*device);
 
@@ -270,7 +302,25 @@ int main(int argc, char *argv[]) {
     }
 
 
+    if (dataType == "half" || dataType == "half4") {
+        const auto height = fImage.height;
+        const auto width = fImage.width;
+#pragma omp parallel for  default(none) shared(img, float16DataBuf)  schedule(static, 4) collapse(3)
+        for (auto y = 0u; y < height; y++) {
+            for (auto x = 0u; x < width; x++) {
+                for (auto c = 0u; c < NumChannels; c++) {
+                    img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(float16DataBuf[(y * width + x) * NumChannels + c]) ;
+                }
+            }
+        }
+
+        delete float16DataBuf;
+    }
+
     auto cImg = toCharImage(stripPadding(fImage));
+
+
+
 
     if (!savePng(cImg, outputFilename)) {
         return EXIT_FAILURE;
