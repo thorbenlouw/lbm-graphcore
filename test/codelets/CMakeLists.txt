@@ -11,4 +11,4 @@ TARGET_LINK_LIBRARIES(test-codelets
         libgmock
         )
 
-configure_file(../../main/D2Q9Codelets.cpp D2Q9Codelets.cpp COPYONLY)
+configure_file(../../main/codelets/D2Q9Codelets.cpp D2Q9Codelets.cpp COPYONLY)

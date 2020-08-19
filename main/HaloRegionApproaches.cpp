@@ -13,7 +13,7 @@
 
 #include <sstream>
 
-constexpr auto NumTilesInIpuCol = 32u;
+constexpr auto NumTilesInIpuCol = 2u;
 
 auto fill(Graph &graph, const Tensor &tensor, const float value, const unsigned tileNumber, ComputeSet &cs) -> void {
     auto v = graph.addVertex(cs,
@@ -23,7 +23,7 @@ auto fill(Graph &graph, const Tensor &tensor, const float value, const unsigned 
                                      {"val",    value}
                              }
     );
-    graph.setCycleEstimate(v, tensor.numElements());
+    graph.setCycleEstimate(v, 100);
     graph.setTileMapping(v, tileNumber);
 }
 
@@ -141,7 +141,7 @@ auto implicitStrategy(Graph &graph, const unsigned numTiles,
                                              {"se",  se(in)}
                                      }
             );
-            graph.setCycleEstimate(v, 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
             v = graph.addVertex(compute2,
                                 "ExtraHalosApproach<float>",
@@ -158,7 +158,7 @@ auto implicitStrategy(Graph &graph, const unsigned numTiles,
                                         {"se",  se(out)}
                                 }
             );
-            graph.setCycleEstimate(v, 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
         }
         return Sequence(Execute(compute1), Execute(compute2));
@@ -217,7 +217,7 @@ auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
                                                                      {blockSizePerTile + 2, blockSizePerTile + 2}),
                          initialiseProgram, "zeroRightHaloEdge");
             popops::zero(graph, blocksForIncludedHalosOut[tile].slice({0, blockSizePerTile + 1},
-                                                                     {blockSizePerTile + 2, blockSizePerTile + 2}),
+                                                                      {blockSizePerTile + 2, blockSizePerTile + 2}),
                          initialiseProgram, "zeroRightHaloEdge");
         }
     }
@@ -332,7 +332,7 @@ auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
                                              {"out", blocksForIncludedHalosOut[tile]},
                                      }
             );
-            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
             v = graph.addVertex(compute2,
                                 "IncludedHalosApproach<float>",
@@ -341,7 +341,7 @@ auto explicitManyTensorStrategy(Graph &graph, const unsigned numTiles,
                                         {"out", blocksForIncludedHalosIn[tile]},
                                 }
             );
-            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
         }
 
@@ -501,7 +501,7 @@ auto explicitOneTensorStrategy2Wave(Graph &graph, const unsigned numTiles,
                                              {"out", block(expandedOut)},
                                      }
             );
-            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
             v = graph.addVertex(compute2,
                                 "IncludedHalosApproach<float>",
@@ -510,7 +510,7 @@ auto explicitOneTensorStrategy2Wave(Graph &graph, const unsigned numTiles,
                                         {"in",  block(expandedOut)},
                                 }
             );
-            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
         }
 
@@ -524,7 +524,8 @@ auto explicitOneTensorStrategy2Wave(Graph &graph, const unsigned numTiles,
 
 
 auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
-                               const unsigned blockSizePerTile, const unsigned numIters) -> std::vector<Program> {
+                               const unsigned blockSizePerTile, const unsigned numIters,
+                               bool groupDirs = false) -> std::vector<Program> {
     const auto NumTilesInIpuRow = numTiles / NumTilesInIpuCol;
 
     auto expandedIn = graph.addVariable(FLOAT,
@@ -577,95 +578,123 @@ auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
 
         const auto haloExchangeFn = [&](Tensor &t) -> Sequence {
             auto s = Sequence{};
-            for (auto tile = 0u; tile < numTiles; tile++) {
-                const auto ipuRow = tile / NumTilesInIpuCol;
-                const auto ipuCol = tile % NumTilesInIpuCol;
+            for (auto copyType = 0; copyType < 8; copyType++) {
+                for (auto tile = 0u; tile < numTiles; tile++) {
+                    const auto ipuRow = tile / NumTilesInIpuCol;
+                    const auto ipuCol = tile % NumTilesInIpuCol;
 
-                const auto borderWidth = blockSizePerTile;
-                const auto borderHeight = blockSizePerTile;
-                const auto ghostRegionWidth = (blockSizePerTile + 2);
-                const auto ghostRegionHeight = (blockSizePerTile + 2);
+                    const auto borderWidth = blockSizePerTile;
+                    const auto borderHeight = blockSizePerTile;
+                    const auto ghostRegionWidth = (blockSizePerTile + 2);
+                    const auto ghostRegionHeight = (blockSizePerTile + 2);
 
-                const auto myGhostTopRow = ipuRow * ghostRegionHeight;
-                const auto myGhostBottomRow = myGhostTopRow + ghostRegionHeight - 1;
-                const auto myGhostLeftCol = ipuCol * ghostRegionWidth;
-                const auto myGhostRightCol = myGhostLeftCol + ghostRegionWidth - 1;
+                    const auto myGhostTopRow = ipuRow * ghostRegionHeight;
+                    const auto myGhostBottomRow = myGhostTopRow + ghostRegionHeight - 1;
+                    const auto myGhostLeftCol = ipuCol * ghostRegionWidth;
+                    const auto myGhostRightCol = myGhostLeftCol + ghostRegionWidth - 1;
 
-                const auto northNeighbourBorderBottomRow = myGhostTopRow - 2;
-                const auto northNeighbourBorderLeftCol = myGhostLeftCol + 1;
-                const auto southNeighbourBorderTopRow = myGhostBottomRow + 2;
-                const auto southNeighbourBorderLeftCol = northNeighbourBorderLeftCol;
-                const auto westNeighbourBorderRightCol = myGhostLeftCol - 2;
-                const auto westNeighbourBorderTopRow = myGhostTopRow + 1;
-                const auto eastNeighbourBorderTopRow = myGhostTopRow + 1;
-                const auto eastNeighbourBorderLeftCol = myGhostRightCol + 2;
-                const auto northWestNeighbourBorderBottomRow = northNeighbourBorderBottomRow;
-                const auto northWestNeighbourBorderRightCol = northNeighbourBorderLeftCol - 2;
-                const auto northEastNeighbourBorderBottomRow = northNeighbourBorderBottomRow;
-                const auto northEastNeighbourBorderLeftCol = northNeighbourBorderLeftCol + ghostRegionWidth;
-                const auto southWestNeighbourBorderTopRow = southNeighbourBorderTopRow;
-                const auto southWestNeighbourBorderRightCol = northWestNeighbourBorderRightCol;
-                const auto southEastNeighbourBorderLeftCol = northEastNeighbourBorderLeftCol;
-                const auto southEastNeighbourBorderTopRow = southNeighbourBorderTopRow;
+                    const auto northNeighbourBorderBottomRow = myGhostTopRow - 2;
+                    const auto northNeighbourBorderLeftCol = myGhostLeftCol + 1;
+                    const auto southNeighbourBorderTopRow = myGhostBottomRow + 2;
+                    const auto southNeighbourBorderLeftCol = northNeighbourBorderLeftCol;
+                    const auto westNeighbourBorderRightCol = myGhostLeftCol - 2;
+                    const auto westNeighbourBorderTopRow = myGhostTopRow + 1;
+                    const auto eastNeighbourBorderTopRow = myGhostTopRow + 1;
+                    const auto eastNeighbourBorderLeftCol = myGhostRightCol + 2;
+                    const auto northWestNeighbourBorderBottomRow = northNeighbourBorderBottomRow;
+                    const auto northWestNeighbourBorderRightCol = northNeighbourBorderLeftCol - 2;
+                    const auto northEastNeighbourBorderBottomRow = northNeighbourBorderBottomRow;
+                    const auto northEastNeighbourBorderLeftCol = northNeighbourBorderLeftCol + ghostRegionWidth;
+                    const auto southWestNeighbourBorderTopRow = southNeighbourBorderTopRow;
+                    const auto southWestNeighbourBorderRightCol = northWestNeighbourBorderRightCol;
+                    const auto southEastNeighbourBorderLeftCol = northEastNeighbourBorderLeftCol;
+                    const auto southEastNeighbourBorderTopRow = southNeighbourBorderTopRow;
 
-                // copy my north neighbour's bottom border to my top ghost
-                if (ipuRow > 0) {
-                    s.add(
-                            Copy(t.slice({northNeighbourBorderBottomRow, northNeighbourBorderLeftCol},
-                                         {northNeighbourBorderBottomRow + 1,
-                                          northNeighbourBorderLeftCol + borderWidth}),
-                                 t.slice({myGhostTopRow, myGhostLeftCol + 1}, {myGhostTopRow + 1, myGhostRightCol})));
+                    // copy my north neighbour's bottom border to my top ghost
+                    if (ipuRow > 0) {
+                        if (!groupDirs || copyType == 0)
+                            s.add(
+                                    Copy(t.slice({northNeighbourBorderBottomRow, northNeighbourBorderLeftCol},
+                                                 {northNeighbourBorderBottomRow + 1,
+                                                  northNeighbourBorderLeftCol + borderWidth}),
+                                         t.slice({myGhostTopRow, myGhostLeftCol + 1},
+                                                 {myGhostTopRow + 1, myGhostRightCol})));
 
-                    // copy my northEast neighbour's bottom left cell to my top right ghost cell
+                        // copy my northEast neighbour's bottom left cell to my top right ghost cell
+                        if (ipuCol < NumTilesInIpuCol - 1) {
+                            if (!groupDirs ||  copyType == 1)
+
+                                s.add(Copy(t[northEastNeighbourBorderBottomRow][northEastNeighbourBorderLeftCol],
+                                           t[myGhostTopRow][myGhostRightCol]));
+                        }
+
+                        // copy my northWest neighbour's bottom right cell to my top left ghost cell
+
+                        if (ipuCol > 0) {
+                            if (!groupDirs || copyType == 2)
+
+                                s.add(Copy(t[northWestNeighbourBorderBottomRow][northWestNeighbourBorderRightCol],
+                                           t[myGhostTopRow][myGhostLeftCol]));
+                        }
+
+
+                    }
+                    // copy my south neighbour's top border to my bottom ghost
+                    if (ipuRow < NumTilesInIpuRow - 1) {
+                        if (!groupDirs || copyType == 3)
+
+                            s.add(
+                                    Copy(t.slice({southNeighbourBorderTopRow, southNeighbourBorderLeftCol},
+                                                 {southNeighbourBorderTopRow + 1,
+                                                  southNeighbourBorderLeftCol + borderWidth}),
+                                         t.slice({myGhostBottomRow, myGhostLeftCol + 1},
+                                                 {myGhostBottomRow + 1, myGhostRightCol})));
+
+                        // copy my southEast neighbour's top left cell to my bottom right ghost cell
+                        if (ipuCol < NumTilesInIpuCol - 1) {
+                            if (!groupDirs || copyType == 4)
+
+                                s.add(Copy(t[southEastNeighbourBorderTopRow][southEastNeighbourBorderLeftCol],
+                                           t[myGhostBottomRow][myGhostRightCol]));
+                        }
+
+                        // copy my southWest neighbour's top right cell to my bottom left ghost cell
+                        if (ipuCol > 0) {
+                            if (!groupDirs || copyType == 5)
+
+                                s.add(Copy(t[southWestNeighbourBorderTopRow][southWestNeighbourBorderRightCol],
+                                           t[myGhostBottomRow][myGhostLeftCol]));
+                        }
+                    }
+
+                    // copy my east neighbour's left border to my right ghost
                     if (ipuCol < NumTilesInIpuCol - 1) {
-                        s.add(Copy(t[northEastNeighbourBorderBottomRow][northEastNeighbourBorderLeftCol],
-                                   t[myGhostTopRow][myGhostRightCol]));
-                    }
+                        if (!groupDirs || copyType == 6)
 
-                    // copy my northWest neighbour's bottom right cell to my top left ghost cell
+                            s.add(
+                                    Copy(t.slice({eastNeighbourBorderTopRow, eastNeighbourBorderLeftCol},
+                                                 {eastNeighbourBorderTopRow + borderHeight,
+                                                  eastNeighbourBorderLeftCol + 1}),
+                                         t.slice({myGhostTopRow + 1, myGhostRightCol},
+                                                 {myGhostBottomRow, myGhostRightCol + 1})));
+                    }
+                    // copy my west neighbour's right border to my left ghost region
                     if (ipuCol > 0) {
-                        s.add(Copy(t[northWestNeighbourBorderBottomRow][northWestNeighbourBorderRightCol],
-                                   t[myGhostTopRow][myGhostLeftCol]));
+                        if (!groupDirs || copyType == 7)
+
+                            s.add(Copy(t.slice({westNeighbourBorderTopRow, westNeighbourBorderRightCol},
+                                               {westNeighbourBorderTopRow + borderHeight,
+                                                westNeighbourBorderRightCol + 1}),
+                                       t.slice({myGhostTopRow + 1, myGhostLeftCol},
+                                               {myGhostBottomRow, myGhostLeftCol + 1})));
                     }
 
 
-                }
-                // copy my south neighbour's top border to my bottom ghost
-                if (ipuRow < NumTilesInIpuRow - 1) {
-                    s.add(
-                            Copy(t.slice({southNeighbourBorderTopRow, southNeighbourBorderLeftCol},
-                                         {southNeighbourBorderTopRow + 1, southNeighbourBorderLeftCol + borderWidth}),
-                                 t.slice({myGhostBottomRow, myGhostLeftCol + 1},
-                                         {myGhostBottomRow + 1, myGhostRightCol})));
 
-                    // copy my southEast neighbour's top left cell to my bottom right ghost cell
-                    if (ipuCol < NumTilesInIpuCol - 1) {
-                        s.add(Copy(t[southEastNeighbourBorderTopRow][southEastNeighbourBorderLeftCol],
-                                   t[myGhostBottomRow][myGhostRightCol]));
-                    }
-
-                    // copy my southWest neighbour's top right cell to my bottom left ghost cell
-                    if (ipuCol > 0) {
-                        s.add(Copy(t[southWestNeighbourBorderTopRow][southWestNeighbourBorderRightCol],
-                                   t[myGhostBottomRow][myGhostLeftCol]));
-                    }
                 }
-
-                // copy my east neighbour's left border to my right ghost
-                if (ipuCol < NumTilesInIpuCol - 1) {
-                    s.add(
-                            Copy(t.slice({eastNeighbourBorderTopRow, eastNeighbourBorderLeftCol},
-                                         {eastNeighbourBorderTopRow + borderHeight, eastNeighbourBorderLeftCol + 1}),
-                                 t.slice({myGhostTopRow + 1, myGhostRightCol},
-                                         {myGhostBottomRow, myGhostRightCol + 1})));
+                if (!groupDirs) {
+                    break;
                 }
-                // copy my west neighbour's right border to my left ghost region
-                if (ipuCol > 0) {
-                    s.add(Copy(t.slice({westNeighbourBorderTopRow, westNeighbourBorderRightCol},
-                                       {westNeighbourBorderTopRow + borderHeight, westNeighbourBorderRightCol + 1}),
-                               t.slice({myGhostTopRow + 1, myGhostLeftCol}, {myGhostBottomRow, myGhostLeftCol + 1})));
-                }
-
             }
             return s;
         };
@@ -692,7 +721,7 @@ auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
                                              {"out", block(expandedOut)},
                                      }
             );
-            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
             v = graph.addVertex(compute2,
                                 "IncludedHalosApproach<float>",
@@ -701,7 +730,7 @@ auto explicitOneTensorStrategy(Graph &graph, const unsigned numTiles,
                                         {"in",  block(expandedOut)},
                                 }
             );
-            graph.setCycleEstimate(v, blockSizePerTile * blockSizePerTile * 9);
+            graph.setCycleEstimate(v, 100);
             graph.setTileMapping(v, tile);
         }
 
@@ -725,7 +754,7 @@ int main(int argc, char *argv[]) {
     cxxopts::Options options(argv[0],
                              " - Prints timing for a run of a simple Moore neighbourhood average stencil ");
     options.add_options()
-            ("h,halo-exhange-strategy", "{implicit,explicitManyTensors,explicitOneTensor,explicitOneTensor2Wave}",
+            ("h,halo-exhange-strategy", "{implicit,explicitManyTensors,explicitOneTensor,explicitOneTensor2Wave,explicitOneTensorGroupedDirs}",
              cxxopts::value<std::string>(strategy)->default_value("implicit"))
             ("n,num-iters", "Number of iterations", cxxopts::value<unsigned>(numIters)->default_value("1"))
             ("b,block-size", "Block size per Tile",
@@ -746,7 +775,8 @@ int main(int argc, char *argv[]) {
             return EXIT_FAILURE;
         }
         if (!(strategy == "implicit" || strategy == "explicitManyTensors"
-              || strategy == "explicitOneTensor" || strategy == "explicitOneTensor2Wave")) {
+              || strategy == "explicitOneTensor" || strategy == "explicitOneTensor2Wave" ||
+              strategy == "explicitOneTensorGroupedDirs")) {
             std::cerr << options.help() << std::endl;
             return EXIT_FAILURE;
         }
@@ -761,7 +791,7 @@ int main(int argc, char *argv[]) {
     }
 
     auto graph = poplar::Graph(*device);
-    const auto numTiles = 128;// graph.getTarget().getNumTiles();
+    const auto numTiles = graph.getTarget().getNumTiles();
 
     std::cout << "Using " << numIpus << " IPUs for " << blockSizePerTile << "x" << blockSizePerTile
               << " blocks on each of "
@@ -788,7 +818,9 @@ int main(int argc, char *argv[]) {
     } else if (strategy == "explicitManyTensors") {
         programs = explicitManyTensorStrategy(graph, numTiles, blockSizePerTile, numIters);
     } else if (strategy == "explicitOneTensor") {
-        programs = explicitOneTensorStrategy(graph, numTiles, blockSizePerTile, numIters);
+        programs = explicitOneTensorStrategy(graph, numTiles, blockSizePerTile, numIters, false);
+    } else if (strategy == "explicitOneTensorGroupedDirs") {
+        programs = explicitOneTensorStrategy(graph, numTiles, blockSizePerTile, numIters, true);
     } else if (strategy == "explicitOneTensor2Wave") {
         programs = explicitOneTensorStrategy2Wave(graph, numTiles, blockSizePerTile, numIters);
     } else {
@@ -846,7 +878,7 @@ int main(int argc, char *argv[]) {
 
         engine.load(*device);
 
-        engine.run(0);
+        //  engine.run(0);
 
         utils::timedStep("Running halo exchange iterations", [&]() -> void {
             engine.run(1);
@@ -856,8 +888,8 @@ int main(int argc, char *argv[]) {
         if (debug) {
             utils::captureProfileInfo(engine);
 
-//            engine.printProfileSummary(std::cout,
-//                                       OptionFlags{{"showExecutionSteps", "false"}});
+            engine.printProfileSummary(std::cout,
+                                       OptionFlags{{"showExecutionSteps", "false"}});
         }
     }
 

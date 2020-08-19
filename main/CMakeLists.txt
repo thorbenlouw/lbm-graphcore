@@ -116,6 +116,6 @@ install(TARGETS lbm DESTINATION bin)
 
 install(TARGETS lbm_with_kernels DESTINATION bin)
 
-configure_file(D2Q9Codelets.cpp D2Q9Codelets.cpp COPYONLY)
-configure_file(StencilCodelet.cpp StencilCodelet.cpp COPYONLY)
-configure_file(HaloRegionApproachesCodelets.cpp HaloRegionApproachesCodelets.cpp COPYONLY)
+configure_file(codelets/D2Q9Codelets.cpp codelets/D2Q9Codelets.cpp COPYONLY)
+configure_file(codelets/StencilCodelet.cpp codelets/StencilCodelet.cpp COPYONLY)
+configure_file(codelets/HaloRegionApproachesCodelets.cpp codelets/HaloRegionApproachesCodelets.cpp COPYONLY)
