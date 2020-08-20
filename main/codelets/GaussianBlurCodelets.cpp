@@ -58,7 +58,7 @@ public:
         const auto ny = height;
         const auto nc = 4;
 
-//         Only works if this is at least a 3x3 block (excluding halos), and in must be same size as out
+        //  Only works if this is at least a 2x2 block (excluding halos), and in must be same size as out
         if (nx > 1 && ny > 1) {
             // top left
             {
@@ -479,8 +479,8 @@ public:
         const auto nx = width;
         constexpr auto nc = NumChannels;
 
-//         Only works if this is at least a 1x1 block (excluding halos), and in must be same size as out
-        if (nx == 1 && ny > 1) {
+        // Only works if this is a 1x1 block (excluding halos)
+        if (nx == 1 && ny == 1) {
 #pragma unroll 4
             for (auto c = 0u; c < nc; c++) {
                 const auto _nw = nw[c];

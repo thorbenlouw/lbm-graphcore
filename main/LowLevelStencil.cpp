@@ -9,6 +9,7 @@
 #include <poplar/IPUModel.hpp>
 #include <popops/codelets.hpp>
 #include <popops/Zero.hpp>
+#include <poplar/CSRFunctions.hpp>
 #include <iostream>
 #include <poplar/Program.hpp>
 #include <poplar/Engine.hpp>
@@ -90,8 +91,8 @@ int main(int argc, char *argv[]) {
 
     cout << inputFilename << " is " << maybeImg->width << "x" << maybeImg->height << " pixels in size." << std::endl;
 
-    auto fImage = zeroPad(toFloatImage(*maybeImg));
-    auto img = fImage.intensities.data(); // TODO still have to get this working with float4s!
+    auto fImage = toFloatImage(*maybeImg);
+    auto img = fImage.intensities.data();
     void *dataBuf = img; // the float case
     uint16_t *float16DataBuf = nullptr;
     if (dataType == "half" || dataType == "half4") {
@@ -137,7 +138,7 @@ int main(int argc, char *argv[]) {
                                                      minRowsPerTile,
                                                      minColsPerTile);
     auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings);
-    grids::serializeToJson(tileLevelMappings, "partitions.json");
+    grids::serializeToJson(workerLevelMappings, "partitions.json");
     for (const auto &[target, slice]: tileLevelMappings) {
         graph.setTileMapping(utils::applySlice(imgTensor, slice), target.virtualTile());
         graph.setTileMapping(utils::applySlice(tmpImgTensor, slice), target.virtualTile());
@@ -222,8 +223,10 @@ int main(int argc, char *argv[]) {
         graph.setCycleEstimate(v, 100);
         graph.setTileMapping(v, target.virtualTile());
     }
-    Sequence stencilProgram = {Execute(inToOut), Execute(outToIn)};
-
+    Sequence stencilProgram;
+    poplar::setFloatingPointBehaviour(graph, stencilProgram, {true, true, true, false, true}, "no stochastic rounding");
+    stencilProgram.add(Execute(inToOut));
+    stencilProgram.add(Execute(outToIn));
 
     auto copyToDevice = Copy(inImg, imgTensor);
     auto copyBackToHost = Copy(imgTensor, outImg);
@@ -324,7 +327,7 @@ int main(int argc, char *argv[]) {
         delete float16DataBuf;
     }
 
-    auto cImg = toCharImage(stripPadding(fImage));
+    auto cImg = toCharImage(fImage);
 
 
     if (!savePng(cImg, outputFilename)) {

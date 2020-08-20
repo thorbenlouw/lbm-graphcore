@@ -99,6 +99,7 @@ target_link_libraries(poplibs_stencil
         poplar
         poputil
         poplin
+        popfloat
         )
 
 

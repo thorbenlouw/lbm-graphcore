@@ -46,6 +46,17 @@ int main(int argc, char *argv[]) {
             ("o,output", "filename output (blurred image)", cxxopts::value<std::string>(outputFilename));
     auto opts = options.parse(argc, argv);
 
+    try {
+        auto opts = options.parse(argc, argv);
+        if (!(inputFilename.length() && outputFilename.length())) {
+            std::cerr << options.help() << std::endl;
+            return EXIT_FAILURE;
+        }
+    } catch (cxxopts::OptionParseException &) {
+        std::cerr << options.help() << std::endl;
+        return EXIT_FAILURE;
+    }
+
     auto maybeImg = loadPng(inputFilename);
     if (!maybeImg.has_value()) {
         return EXIT_FAILURE;
@@ -61,7 +72,7 @@ int main(int argc, char *argv[]) {
     auto tic = std::chrono::high_resolution_clock::now();
 
     for (auto iter = 0u; iter < numIters; iter++) {
-        for (auto c = 0u; c < NumChannels; c++) {
+        for (auto c = 0u; c < NumChannels-1; c++) {
             const auto offset = c * fImage.width * fImage.height;
             gaussian_blur(&img[offset], &tmp_img[offset], fImage.width, fImage.height);
             gaussian_blur(&tmp_img[offset], &img[offset], fImage.width, fImage.height);

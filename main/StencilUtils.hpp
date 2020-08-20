@@ -131,7 +131,7 @@ namespace stencil {
         };
 #pragma omp parallel for  default(none) shared(newImage, channelsFirst)  schedule(static, 4) collapse(3)
         for (auto row = 0u; row < newImage.height; row++) {
-            for (auto col = 1u; col < newImage.width; col++) {
+            for (auto col = 0u; col < newImage.width; col++) {
                 for (auto chan = 0u; chan < NumChannels; chan++) {
                     const auto chanLastIdx = row * (newImage.width * NumChannels) + col * NumChannels + chan;
                     const auto chanFirstIdx = chan * (newImage.height * newImage.width) + row * newImage.width + col;
@@ -211,8 +211,11 @@ namespace stencil {
                                     (floatImage.intensities[idx] + min[c]) /
                                     (max[c] - min[c]); // Now it's in the range 0..1
                     auto inOrigBrightness =
-                            (rescaled * (float) (floatImage.origChanMax[c] - floatImage.origChanMin[c])) +
+                             (rescaled * (float) (floatImage.origChanMax[c] - floatImage.origChanMin[c])) +
                             (float) floatImage.origChanMin[c];
+                    if (inOrigBrightness > floatImage.origChanMax[c]) {
+                        inOrigBrightness = floatImage.origChanMax[c];
+                    }
                     img.bytes[idx] = (unsigned char) inOrigBrightness;
                 }
             }

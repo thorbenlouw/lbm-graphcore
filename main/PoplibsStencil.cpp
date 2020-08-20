@@ -6,6 +6,7 @@
 #include "StencilUtils.hpp"
 #include "GraphcoreUtils.hpp"
 #include <poplar/IPUModel.hpp>
+#include <poplar/CSRFunctions.hpp>
 #include <popops/codelets.hpp>
 #include <popops/Zero.hpp>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include <poplin/Convolution.hpp>
 #include <poplin/codelets.hpp>
 #include <sstream>
+#include <popfloat/experimental/CastToHalf.hpp> // for halfToSingle and singleToHalf
 
 using namespace stencil;
 using namespace poplar;
@@ -26,6 +28,8 @@ int main(int argc, char *argv[]) {
     bool compileOnly = false;
     bool debug = false;
     bool useIpuModel = false;
+    std::string dataType = "float";
+    float availableMemoryProportion = 0.6f;
 
     cxxopts::Options options(argv[0],
                              " - Runs a 3x3 Gaussian Blur stencil over an input image a number of times using Poplibs on the IPU");
@@ -34,6 +38,9 @@ int main(int argc, char *argv[]) {
             ("i,image", "filename input image (must be a 4-channel PNG image)",
              cxxopts::value<std::string>(inputFilename))
             ("num-ipus", "Number of IPUs to target (1,2,4,8 or 16)", cxxopts::value<unsigned>(numIpus))
+            ("conv-mem", "Available memory proportion for convolution plan (default 0.6)", cxxopts::value<float>(availableMemoryProportion))
+            ("data-type", "Data type (float, half)",
+             cxxopts::value<string>(dataType)->default_value("float"))
             ("o,output", "filename output (blurred image)", cxxopts::value<std::string>(outputFilename))
             ("d,debug", "Run in debug mode (capture profiling information)")
             ("compile-only", "Only compile the graph and write to stencil_<width>x<height>.exe, don't run")
@@ -44,7 +51,7 @@ int main(int argc, char *argv[]) {
         debug = opts["debug"].as<bool>();
         compileOnly = opts["compile-only"].as<bool>();
         useIpuModel = opts["ipu-model"].as<bool>();
-        if (opts.count("n") + opts.count("i") + opts.count("num-ipus") + opts.count("o") < 0) {
+        if (opts.count("n") + opts.count("i") + opts.count("num-ipus") + opts.count("o") < 4) {
             std::cerr << options.help() << std::endl;
             return EXIT_FAILURE;
         }
@@ -64,18 +71,42 @@ int main(int argc, char *argv[]) {
     auto fImage = toChannelsFirst(toFloatImage(*maybeImg));
     auto img = fImage.intensities.data();
 
+    void *dataBuf = img; // the float case
+    uint16_t *float16DataBuf = nullptr;
+    if (dataType == "half") {
+        const auto height = fImage.height;
+        const auto width = fImage.width;
+        float16DataBuf = new uint16_t[width * height * NumChannels];
+
+#pragma omp parallel for  default(none) shared(img, float16DataBuf)  schedule(static, 4) collapse(3)
+        for (auto y = 0u; y < height; y++) {
+            for (auto x = 0u; x < width; x++) {
+                for (auto c = 0u; c < NumChannels; c++) {
+                    float16DataBuf[(y * width + x) * NumChannels + c] = popfloat::experimental::singleToHalf(
+                            img[(y * width + x) * NumChannels + c]);
+                }
+            }
+        }
+        dataBuf = float16DataBuf;
+    }
+
+
     auto device = useIpuModel ? utils::getIpuModel(numIpus) : utils::getIpuDevice(numIpus);
 
+    std::cout << "Using data type " << dataType << std::endl;
 
     std::cout << "Building graph";
     auto tic = std::chrono::high_resolution_clock::now();
     auto graph = poplar::Graph(*device);
     poplin::addCodelets(graph);
     popops::addCodelets(graph);
+    auto poplarType = dataType == "half" ? HALF : FLOAT;
+
+
     auto kernel = ArrayRef{1.f / 16, 2.f / 16, 1.f / 16,
                            2.f / 16, 4.f / 16, 2.f / 16,
                            1.f / 16, 2.f / 16, 1.f / 16};
-    auto gaussianBlurMask = graph.addConstant(FLOAT, {3, 3},
+    auto gaussianBlurMask = graph.addConstant(poplarType, {3, 3},
                                               kernel,
                                               "3x3gaussian_blur_kernel");
     graph.setTileMapping(gaussianBlurMask, 0);
@@ -100,14 +131,15 @@ int main(int argc, char *argv[]) {
             {0, 0},
             {0, 0}};
 
-    auto convParams = ConvParams(FLOAT, FLOAT, 1, {fImage.height, fImage.width},
+    auto convParams = ConvParams(poplarType, poplarType, 1, {fImage.height, fImage.width},
                                  {3, 3}, 4, 4, 1,
                                  padInput, transformKernel,
                                  transformOutput);
 
     auto convOptions = OptionFlags{{"pass",                  "INFERENCE_FWD"},
                                    {"remapOutputTensor",     "true"},
-                                   {"use128BitConvUnitLoad", "true"}};
+                                   {"use128BitConvUnitLoad", "true"},
+                                   {"availableMemoryProportion", std::to_string(availableMemoryProportion)}};
     auto imgTensor = createInput(graph, convParams, "convInput", convOptions);
     // imgTensor is 1x4x3x3
     auto weights = createWeights(graph, convParams, "convWeights", convOptions);
@@ -121,11 +153,12 @@ int main(int argc, char *argv[]) {
         }
     };
 
-    const auto inImg = graph.addHostToDeviceFIFO(">>img", FLOAT,
+    const auto inImg = graph.addHostToDeviceFIFO(">>img", poplarType,
                                                  NumChannels * fImage.height * fImage.width);
-    const auto outImg = graph.addDeviceToHostFIFO("<<img", FLOAT,
+    const auto outImg = graph.addDeviceToHostFIFO("<<img", poplarType,
                                                   NumChannels * fImage.height * fImage.width);
     Sequence stencilProgram;
+    poplar::setFloatingPointBehaviour(graph, stencilProgram, {true, true, true, false, true}, "no stochastic rounding");
     auto out = convolution(graph, imgTensor, weights, convParams, false,
                            stencilProgram, "convolution", convOptions
     );
@@ -189,8 +222,8 @@ int main(int argc, char *argv[]) {
                   std::endl;
 
 
-        engine.connectStream(">>img", img);
-        engine.connectStream("<<img", img);
+        engine.connectStream(">>img", dataBuf);
+        engine.connectStream("<<img", dataBuf);
 
         engine.load(*device);
 
@@ -213,6 +246,21 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (dataType == "half") {
+        const auto height = fImage.height;
+        const auto width = fImage.width;
+#pragma omp parallel for  default(none) shared(img, float16DataBuf)  schedule(static, 4) collapse(3)
+        for (auto y = 0u; y < height; y++) {
+            for (auto x = 0u; x < width; x++) {
+                for (auto c = 0u; c < NumChannels; c++) {
+                    img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(
+                            float16DataBuf[(y * width + x) * NumChannels + c]);
+                }
+            }
+        }
+
+        delete float16DataBuf;
+    }
 
     auto cImg = toCharImage(toChannelsLast(fImage));
 

@@ -339,7 +339,6 @@ public:
  * 2. Middle: w, m, e
  * 3. Bottom: sw, w, m, se, s, e
  */
-template<typename T>
 class GaussianNarrow1ColBlurCodeletFloat2 : public Vertex {
 
 public:
@@ -424,7 +423,6 @@ public:
  * Vectorised float2 version of the extreme case, where the worker's partition 1 column wide and 1 cell high. Now all neighbours come from the
  * 8 halo regions. We do the RG channels together then the BA channels
  */
-template<typename T>
 class GaussianBlur1x1CodeletFloat2 : public Vertex { // Extreme case of a 1x1 partition!
 
 public:
@@ -443,8 +441,8 @@ public:
 
         constexpr auto x = 0u;
         constexpr auto y = 0u;
-//         Only works if this is at least a 1x1 block (excluding halos), and in must be same size as out
-        if (nx == 1 && ny > 1) {
+//         Only works if this is a 1x1 block (excluding halos)
+        if (nx == 1 && ny == 1) {
 #pragma unroll 2
             for (auto c = 0u; c < 2; c++) {
                 const auto _nw = AS_F2(nw)[c];
@@ -767,7 +765,7 @@ public:
  * 2. Middle: w, m, e
  * 3. Bottom: sw, w, m, se, s, e
  */
-template<typename T>
+
 class GaussianNarrow1ColBlurCodeletHalf4 : public Vertex {
 
 public:
@@ -846,7 +844,7 @@ public:
  * Vectorised half4 version of the extreme case, where the worker's partition 1 column wide and 1 cell high. Now all neighbours come from the
  * 8 halo regions. We do the RG channels together then the BA channels
  */
-template<typename T>
+
 class GaussianBlur1x1CodeletHalf4 : public Vertex { // Extreme case of a 1x1 partition!
 
 public:
@@ -861,8 +859,8 @@ public:
         const auto ny = height;
         const auto nx = width;
 
-        // Only works if this is at least a 1x1 block (excluding halos), and in must be same size as out
-        if (nx == 1 && ny > 1) {
+        // Only works if this is a 1x1 block (excluding halos)
+        if (nx == 1 && ny == 1) {
             constexpr auto x = 0u;
             constexpr auto y = 0u;
             const auto h4in = AS_H4(in);
