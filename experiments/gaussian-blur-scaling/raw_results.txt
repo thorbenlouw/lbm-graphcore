@@ -1,0 +1,337 @@
+bricks, half4, 1
+!!!
+bricks, half4, 2
+!!!
+bricks, half4, 4
+!!!
+bricks, half4, 8
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       2.1682s
+Compiling graph took       15.832s
+                                           Copying to device took    0.0051589s
+                                  Running stencil iterations took    0.0020447s
+                                             Copying to host took   0.00099589s
+bricks, half4, 16
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       3.0117s
+Compiling graph took       32.309s
+                                           Copying to device took     0.010415s
+                                  Running stencil iterations took    0.0078149s
+                                             Copying to host took    0.0013371s
+bricks, float2, 1
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.1086s
+Compiling graph took       2.3582s
+                                           Copying to device took     0.003443s
+                                  Running stencil iterations took    0.0018836s
+                                             Copying to host took    0.0011214s
+bricks, float2, 2
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.3524s
+Compiling graph took       4.5231s
+                                           Copying to device took    0.0034046s
+                                  Running stencil iterations took    0.0017453s
+                                             Copying to host took    0.0011118s
+bricks, float2, 4
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       1.8066s
+Compiling graph took        9.141s
+                                           Copying to device took     0.012648s
+                                  Running stencil iterations took    0.0017584s
+                                             Copying to host took     0.001402s
+bricks, float2, 8
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took        2.145s
+Compiling graph took       15.425s
+                                           Copying to device took     0.039544s
+                                  Running stencil iterations took     0.001782s
+                                             Copying to host took    0.0017398s
+bricks, float2, 16
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       2.8564s
+Compiling graph took       30.689s
+                                           Copying to device took       0.1115s
+                                  Running stencil iterations took    0.0080181s
+                                             Copying to host took    0.0019056s
+bricks, float, 1
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.1159s
+Compiling graph took       2.4132s
+                                           Copying to device took    0.0035646s
+                                  Running stencil iterations took    0.0027306s
+                                             Copying to host took    0.0011279s
+bricks, float, 2
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.3606s
+Compiling graph took       4.4505s
+                                           Copying to device took    0.0032784s
+                                  Running stencil iterations took    0.0023608s
+                                             Copying to host took    0.0011103s
+bricks, float, 4
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       1.8147s
+Compiling graph took       9.0124s
+                                           Copying to device took     0.012346s
+                                  Running stencil iterations took    0.0017236s
+                                             Copying to host took    0.0011933s
+bricks, float, 8
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       2.1728s
+Compiling graph took       15.429s
+                                           Copying to device took     0.047154s
+                                  Running stencil iterations took    0.0019271s
+                                             Copying to host took    0.0015438s
+bricks, float, 16
+../../images/bricks.png is 499x302 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       2.8551s
+Compiling graph took        31.52s
+                                           Copying to device took      0.11199s
+                                  Running stencil iterations took    0.0032074s
+                                             Copying to host took    0.0024492s
+leaf, half4, 1
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.1815s
+Compiling graph took       4.9081s
+                                           Copying to device took    0.0067694s
+                                  Running stencil iterations took     0.005332s
+                                             Copying to host took     0.002717s
+leaf, half4, 2
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.4254s
+Compiling graph took       7.7202s
+                                           Copying to device took    0.0063563s
+                                  Running stencil iterations took    0.0037391s
+                                             Copying to host took    0.0026315s
+leaf, half4, 4
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       2.0412s
+Compiling graph took       17.403s
+                                           Copying to device took     0.033458s
+                                  Running stencil iterations took    0.0030586s
+                                             Copying to host took    0.0024007s
+leaf, half4, 8
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       3.0296s
+Compiling graph took       28.598s
+                                           Copying to device took     0.080167s
+                                  Running stencil iterations took    0.0034448s
+                                             Copying to host took    0.0029962s
+leaf, half4, 16
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       5.1627s
+Compiling graph took       58.476s
+                                           Copying to device took      0.19691s
+                                  Running stencil iterations took    0.0074087s
+                                             Copying to host took    0.0040588s
+leaf, float2, 1
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.1823s
+Compiling graph took       5.2417s
+                                           Copying to device took    0.0091153s
+                                  Running stencil iterations took    0.0079091s
+                                             Copying to host took    0.0050475s
+leaf, float2, 2
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.4239s
+Compiling graph took       9.7617s
+                                           Copying to device took     0.035225s
+                                  Running stencil iterations took    0.0050651s
+                                             Copying to host took     0.004432s
+leaf, float2, 4
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       2.0339s
+Compiling graph took       17.001s
+                                           Copying to device took      0.12034s
+                                  Running stencil iterations took    0.0038285s
+                                             Copying to host took    0.0036937s
+leaf, float2, 8
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       2.9965s
+Compiling graph took        31.63s
+                                           Copying to device took      0.20862s
+                                  Running stencil iterations took    0.0042651s
+                                             Copying to host took    0.0045331s
+leaf, float2, 16
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       5.1498s
+Compiling graph took       56.295s
+                                           Copying to device took      0.46848s
+                                  Running stencil iterations took    0.0083787s
+                                             Copying to host took    0.0061709s
+leaf, float, 1
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.1794s
+Compiling graph took       5.2191s
+                                           Copying to device took       0.0168s
+                                  Running stencil iterations took     0.014304s
+                                             Copying to host took    0.0054805s
+leaf, float, 2
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.4147s
+Compiling graph took       9.4281s
+                                           Copying to device took      0.03592s
+                                  Running stencil iterations took     0.007817s
+                                             Copying to host took    0.0044879s
+leaf, float, 4
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       2.0338s
+Compiling graph took       17.124s
+                                           Copying to device took      0.11972s
+                                  Running stencil iterations took     0.004771s
+                                             Copying to host took    0.0034371s
+leaf, float, 8
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       3.0067s
+Compiling graph took       32.148s
+                                           Copying to device took      0.20943s
+                                  Running stencil iterations took    0.0074614s
+                                             Copying to host took    0.0056275s
+leaf, float, 16
+../../images/leaf.png is 768x1024 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took        5.151s
+Compiling graph took       57.312s
+                                           Copying to device took      0.47604s
+                                  Running stencil iterations took     0.011183s
+                                             Copying to host took    0.0045064s
+cheese, half4, 1
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.2389s
+Compiling graph took       7.2882s
+                                           Copying to device took     0.018646s
+                                  Running stencil iterations took     0.013125s
+                                             Copying to host took    0.0083297s
+cheese, half4, 2
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.5795s
+Compiling graph took        14.74s
+                                           Copying to device took     0.051325s
+                                  Running stencil iterations took    0.0085587s
+                                             Copying to host took    0.0074413s
+cheese, half4, 4
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       2.1588s
+Compiling graph took       26.036s
+                                           Copying to device took      0.11161s
+                                  Running stencil iterations took    0.0053747s
+                                             Copying to host took    0.0071404s
+cheese, half4, 8
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       3.3298s
+Compiling graph took       46.753s
+                                           Copying to device took      0.24165s
+                                  Running stencil iterations took    0.0048464s
+                                             Copying to host took    0.0076138s
+cheese, half4, 16
+!!!
+
+cheese, float2, 1
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.2472s
+Compiling graph took       7.9851s
+                                           Copying to device took     0.037067s
+                                  Running stencil iterations took     0.019757s
+                                             Copying to host took     0.014739s
+cheese, float2, 2
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.5512s
+Compiling graph took       20.281s
+                                           Copying to device took     0.063653s
+                                  Running stencil iterations took      0.01224s
+                                             Copying to host took     0.012376s
+cheese, float2, 4
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       2.1469s
+Compiling graph took       19.161s
+                                           Copying to device took      0.17553s
+                                  Running stencil iterations took    0.0072911s
+                                             Copying to host took      0.01517s
+cheese, float2, 8
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       3.3334s
+Compiling graph took       59.565s
+                                           Copying to device took      0.27508s
+                                  Running stencil iterations took     0.005408s
+                                             Copying to host took     0.013474s
+cheese, float2, 16
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       5.2497s
+Compiling graph took       46.925s
+                                           Copying to device took     0.042748s
+                                  Running stencil iterations took    0.0053852s
+                                             Copying to host took     0.015193s
+cheese, float, 1
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 0 - attached
+Building graph took       1.2466s
+Compiling graph took       8.1823s
+                                           Copying to device took     0.037262s
+                                  Running stencil iterations took     0.033634s
+                                             Copying to host took     0.015208s
+cheese, float, 2
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 16 - attached
+Building graph took       1.5599s
+Compiling graph took       20.608s
+                                           Copying to device took     0.055107s
+                                  Running stencil iterations took     0.019788s
+                                             Copying to host took     0.012447s
+cheese, float, 4
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 24 - attached
+Building graph took       2.1346s
+Compiling graph took        19.43s
+                                           Copying to device took      0.15194s
+                                  Running stencil iterations took     0.011053s
+                                             Copying to host took     0.012538s
+cheese, float, 8
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 28 - attached
+Building graph took       3.3295s
+Compiling graph took        58.83s
+                                           Copying to device took      0.24794s
+                                  Running stencil iterations took    0.0080261s
+                                             Copying to host took     0.011653s
+cheese, float, 16
+../../images/cheese.png is 2200x1122 pixels in size.
+Trying to attach to IPU 30 - attached
+Building graph took       5.1932s
+Compiling graph took        46.79s
+                                           Copying to device took     0.039088s
+                                  Running stencil iterations took    0.0072675s
+                                             Copying to host took     0.010695s

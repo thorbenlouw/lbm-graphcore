@@ -1,0 +1,100 @@
+---
+explicitOneTensor
+Execution:
+
+  Total cycles:                                         178,569,036 (approx 111,605.6 microseconds)
+  Tile average compute cycles (including idle threads): 207,965.0 (0.1% of total)
+  Tile average compute cycles (excluding idle threads): 98,504.3 (0.1% of total)
+  Tile average IPU exchange cycles:                     19,309.1 (0.0% of total)
+  Tile average global exchange cycles:                  0.0 (0.0% of total)
+  Tile average host exchange cycles:                    0.0 (0.0% of total)
+  Tile average sync cycles:                             178,341,761.9 (99.9% of total)
+
+  Cycles by vertex type:
+    popops::Zero2d<float>              (14592 instances):   17,612,544
+    poplar_rt::DstLongStridedCopy       (7298 instances):   11,521,852
+    poplar_rt::DstStridedCopyDA32       (9726 instances):   11,268,126
+    poplar_rt::ShortMemcpy             (12744 instances):      973,414
+    Fill<float>                         (2432 instances):      243,200
+    IncludedHalosApproach<float>        (2432 instances):      243,200
+    poplar_rt::Memcpy64Bit              (1220 instances):      101,132
+---
+explicitOneTensor2Wave
+
+
+Execution:
+
+  Total cycles:                                         147,570 (approx 92.2 microseconds)
+  Tile average compute cycles (including idle threads): 129,556.1 (87.8% of total)
+  Tile average compute cycles (excluding idle threads): 108,864.5 (73.8% of total)
+  Tile average IPU exchange cycles:                     9,262.3 (6.3% of total)
+  Tile average global exchange cycles:                  0.0 (0.0% of total)
+  Tile average host exchange cycles:                    0.0 (0.0% of total)
+  Tile average sync cycles:                             8,751.6 (5.9% of total)
+
+  Cycles by vertex type:
+    popops::Zero2d<float>              (14592 instances):   17,612,544
+    poplar_rt::DstStridedCopyDA32      (14592 instances):   11,688,192
+    poplar_rt::DstLongStridedCopy       (7296 instances):   11,521,600
+    poplar_rt::ShortMemcpy             (23056 instances):    1,914,536
+    Fill<float>                         (2432 instances):      243,200
+    IncludedHalosApproach<float>        (2432 instances):      243,200
+
+---
+explicitManyTensors
+Execution:
+
+  Total cycles:                                         315,370 (approx 197.1 microseconds)
+  Tile average compute cycles (including idle threads): 210,256.1 (66.7% of total)
+  Tile average compute cycles (excluding idle threads): 99,488.2 (31.5% of total)
+  Tile average IPU exchange cycles:                     7,930.3 (2.5% of total)
+  Tile average global exchange cycles:                  0.0 (0.0% of total)
+  Tile average host exchange cycles:                    0.0 (0.0% of total)
+  Tile average sync cycles:                             97,183.6 (30.8% of total)
+
+  Cycles by vertex type:
+    poplar_rt::DstLongStridedCopy       (7922 instances):   11,600,476
+    poplar_rt::DstStridedCopyDA32       (8522 instances):   11,065,032
+    popops::Zero2d<float>              (14592 instances):    4,961,280
+    poplar_rt::ShortMemcpy             (16216 instances):    1,238,786
+    Fill<float>                         (2432 instances):      243,200
+    IncludedHalosApproach<float>        (2432 instances):      243,200
+    poplar_rt::Memcpy64Bit              (1182 instances):       79,866
+    popops::Zero<float>                   (48 instances):        1,368
+
+---
+explicitOneTensorGroupedDirs
+Execution:
+
+  Total cycles:                                         147,530 (approx 92.2 microseconds)
+  Tile average compute cycles (including idle threads): 122,211.1 (82.8% of total)
+  Tile average compute cycles (excluding idle threads): 100,890.8 (68.4% of total)
+  Tile average IPU exchange cycles:                     9,220.7 (6.3% of total)
+  Tile average global exchange cycles:                  0.0 (0.0% of total)
+  Tile average host exchange cycles:                    0.0 (0.0% of total)
+  Tile average sync cycles:                             16,098.2 (10.9% of total)
+
+  Cycles by vertex type:
+    popops::Zero2d<float>              (14592 instances):   17,612,544
+    poplar_rt::DstLongStridedCopy       (7296 instances):   11,521,600
+    poplar_rt::DstStridedCopyDA32      (14592 instances):   11,469,312
+    poplar_rt::ShortMemcpy             (14144 instances):    1,090,912
+    Fill<float>                         (2432 instances):      243,200
+    IncludedHalosApproach<float>        (2432 instances):      243,200
+    poplar_rt::Memcpy64Bit              (1088 instances):       72,896
+
+---
+implicit
+Execution:
+
+  Total cycles:                                         21,010 (approx 13.1 microseconds)
+  Tile average compute cycles (including idle threads): 12,000.0 (57.1% of total)
+  Tile average compute cycles (excluding idle threads): 2,000.0 (9.5% of total)
+  Tile average IPU exchange cycles:                     5,682.0 (27.0% of total)
+  Tile average global exchange cycles:                  0.0 (0.0% of total)
+  Tile average host exchange cycles:                    0.0 (0.0% of total)
+  Tile average sync cycles:                             3,328.0 (15.8% of total)
+
+  Cycles by vertex type:
+    ExtraHalosApproach<float>       (2432 instances):      243,200
+    Fill<float>                     (1216 instances):      121,600

@@ -1,0 +1,6 @@
+strategy,totalCycleCount,exchangeCycleCount
+implicit,21010,5682
+explicitOneTensor,178569036,19309.1
+explicitOneTensor2Wave,147570,9262.3
+explicitOneTensorGroupedDirs,147530,9220.7
+explicitManyTensors,315370,7930.3
