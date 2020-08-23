@@ -113,13 +113,16 @@ int main(int argc, char *argv[]) {
     }
 
     auto device = useIpuModel ? utils::getIpuModel(numIpus) : utils::getIpuDevice(numIpus);
+    if (!device.has_value()) {
+        return EXIT_FAILURE;
+    }
 
     std::cout << "Building graph";
     auto tic = std::chrono::high_resolution_clock::now();
     auto graph = poplar::Graph(*device);
     auto poplarType = dataType == "half4" ? HALF : FLOAT;
-    graph.addCodelets("codelets/GaussianBlurCodelets.cpp");
-    graph.addCodelets("codelets/GaussianBlurCodeletsVectorised.cpp");
+    graph.addCodelets("codelets/GaussianBlurCodelets.cpp", CodeletFileType::Auto, "-O3");
+    graph.addCodelets("codelets/GaussianBlurCodeletsVectorised.cpp", CodeletFileType::Auto, "-O3");
 
     const auto inImg = graph.addHostToDeviceFIFO(">>img", poplarType,
                                                  NumChannels * fImage.height * fImage.width);

@@ -318,9 +318,9 @@ public:
                     const auto _n = AS_F2(n)[F2_HALO_OFFSET_H(0)];
                     const auto _m = f2in[F2_IDX(0, 0)];
                     const auto _s = AS_F2(s)[F2_HALO_OFFSET_H(0)];
-                    const auto _ne = AS_F2(n)[F2_HALO_OFFSET_H(1)];
+                    const auto _ne = AS_F2(ne)[c];
                     const auto _e = f2in[F2_IDX(0, 1)];
-                    const auto _se = AS_F2(s)[F2_HALO_OFFSET_H(1)];
+                    const auto _se = AS_F2(se)[c];
                     f2out[F2_IDX(0, 0)] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
                 }
             }
@@ -395,7 +395,7 @@ public:
                 }
             }
 
-            // Right
+            // Bottom
             {
                 const auto y = ny - 1u;
 #pragma unroll 2
@@ -737,6 +737,7 @@ public:
 
             // Right
             {
+                const half4 ZERO = {};
                 const auto x = nx - 1u;
                 const auto _nw = AS_H4(n)[H4_HALO_OFFSET_H(-1)];
                 const auto _w = h4in[H4_IDX(0, -1)];
@@ -744,9 +745,9 @@ public:
                 const auto _n = AS_H4(n)[H4_HALO_OFFSET_H(0)];
                 const auto _m = h4in[H4_IDX(0, 0)];
                 const auto _s = AS_H4(s)[H4_HALO_OFFSET_H(0)];
-                const auto _ne = AS_H4(n)[H4_HALO_OFFSET_H(1)];
+                const auto _ne = AS_H4(ne)[0];
                 const auto _e = h4in[H4_IDX(0, 1)];
-                const auto _se = AS_H4(s)[H4_HALO_OFFSET_H(1)];
+                const auto _se = AS_H4(se)[0];
                 h4out[H4_IDX(0, 0)] = stencil(_nw, _n, _ne, _w, _m, _e, _sw, _s, _se);
             }
             return true;
@@ -817,7 +818,7 @@ public:
                 }
             }
 
-            // Right
+            // Bottom
             {
                 const auto y = ny - 1u;
 
