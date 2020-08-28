@@ -1,0 +1,22 @@
+float
+  Total cycles:                                         126,351,372 (approx 78,969.6 microseconds)
+  Tile average compute cycles (including idle threads): 32,146,868.4 (25.4% of total)
+  Tile average IPU exchange cycles:                     179,984.5 (0.1% of total)
+  Tile average global exchange cycles:                  0.0 (0.0% of total)
+  Tile average host exchange cycles:                    6,552,435.7 (5.2% of total)
+  Tile average sync cycles:                             87,472,083.4 (69.2% of total)
+
+ float2
+   Total cycles:                                         106,179,150 (approx 66,362.0 microseconds)
+   Tile average compute cycles (including idle threads): 15,322,789.5 (14.4% of total)
+   Tile average IPU exchange cycles:                     179,984.5 (0.2% of total)
+   Tile average global exchange cycles:                  0.0 (0.0% of total)
+   Tile average host exchange cycles:                    6,537,613.2 (6.2% of total)
+   Tile average sync cycles:                             84,138,762.9 (79.2% of total)
+
+  Total cycles:                                         46,188,492 (approx 28,867.8 microseconds)
+  Tile average compute cycles (including idle threads): 9,776,488.5 (21.2% of total)
+  Tile average IPU exchange cycles:                     98,879.4 (0.2% of total)
+  Tile average global exchange cycles:                  0.0 (0.0% of total)
+  Tile average host exchange cycles:                    3,366,421.3 (7.3% of total)
+  Tile average sync cycles:                             32,946,702.9 (71.3% of total)

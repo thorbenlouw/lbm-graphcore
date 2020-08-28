@@ -29,4 +29,5 @@ done
 
 
 # And then afterwards, you can
-cat effect-of-mem-on-conv.csv | grep ",\|iter" | sed 's/                                  Running stencil iterations took/,/' | sed 's/s$//' | sed '$!N;s/\n/ /' | tr -s ' ' | sed 's/ //' > tmp.csv
+echo "image,datatype,memProportion,numIpus,time" > tmp.csv
+cat effect-of-mem-on-conv.csv | grep ",\|IPU timing" | sed 's/Average IPU timing for program is:/,/' | sed '$!N;s/\n/ /' | tr -s ' ' | sed 's/ //g' >> tmp.csv

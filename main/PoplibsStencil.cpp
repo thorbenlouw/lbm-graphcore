@@ -15,6 +15,7 @@
 #include <poplin/codelets.hpp>
 #include <sstream>
 #include <popfloat/experimental/CastToHalf.hpp> // for halfToSingle and singleToHalf
+#include <poplar/CycleCount.hpp>
 
 using namespace stencil;
 using namespace poplar;
@@ -163,12 +164,15 @@ int main(int argc, char *argv[]) {
                            stencilProgram, "convolution", convOptions
     );
     stencilProgram.add(Copy(out, imgTensor));
+    auto timedStencilProgram = Sequence{copyKernelToWeights, Repeat(2 * numIters, stencilProgram)};
+    auto timing = poplar::cycleCount(graph, timedStencilProgram, 0, "timer");
+    graph.createHostRead("readTimer", timing, true);
 
     auto copyToDevice = Copy(inImg, imgTensor);
     auto copyBackToHost = Copy(imgTensor, outImg);
 
     const auto programs = std::vector<Program>{copyToDevice,
-                                               Sequence{copyKernelToWeights, Repeat(2 * numIters, stencilProgram)},
+                                               timedStencilProgram,
                                                copyBackToHost};
 
 
@@ -214,10 +218,10 @@ int main(int argc, char *argv[]) {
         return EXIT_SUCCESS;
     } else {
         auto engine = Engine(graph, programs,
-                             utils::POPLAR_ENGINE_OPTIONS_DEBUG);
+                             debug ? utils::POPLAR_ENGINE_OPTIONS_DEBUG : utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
 
         toc = std::chrono::high_resolution_clock::now();
-        diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        diff = std::chrono::duration_cast < std::chrono::duration < double >> (toc - tic).count();
         std::cout << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" <<
                   std::endl;
 
@@ -244,28 +248,41 @@ int main(int argc, char *argv[]) {
 //            engine.printProfileSummary(std::cout,
 //                                       OptionFlags{{"showExecutionSteps", "false"}});
         }
-    }
 
-    if (dataType == "half") {
-        const auto height = fImage.height;
-        const auto width = fImage.width;
+        if (dataType == "half") {
+            const auto height = fImage.height;
+            const auto width = fImage.width;
 #pragma omp parallel for  default(none) shared(img, float16DataBuf)  schedule(static, 4) collapse(3)
-        for (auto y = 0u; y < height; y++) {
-            for (auto x = 0u; x < width; x++) {
-                for (auto c = 0u; c < NumChannels; c++) {
-                    img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(
-                            float16DataBuf[(y * width + x) * NumChannels + c]);
+            for (auto y = 0u; y < height; y++) {
+                for (auto x = 0u; x < width; x++) {
+                    for (auto c = 0u; c < NumChannels; c++) {
+                        img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(
+                                float16DataBuf[(y * width + x) * NumChannels + c]);
+                    }
                 }
             }
+
+            delete float16DataBuf;
         }
 
-        delete float16DataBuf;
-    }
+        auto cImg = toCharImage(toChannelsLast(fImage));
 
-    auto cImg = toCharImage(toChannelsLast(fImage));
+        if (!savePng(cImg, outputFilename)) {
+            return EXIT_FAILURE;
+        }
 
-    if (!savePng(cImg, outputFilename)) {
-        return EXIT_FAILURE;
+        cout << "Now doing 5 runs and averaging IPU-reported timing:";
+        unsigned long ipuTimer;
+        double time = 0.;
+        for (auto run = 0u; run < 5u; run++) {
+            engine.run(1);
+            engine.readTensor("readTimer", &ipuTimer);
+            time += ipuTimer;
+        }
+        std::cout << "IPU reports " << device->getTarget().getTileClockFrequency() << "Hz clock frequency" << std::endl;
+        std::cout << "Average IPU timing for program is: "
+                  << (double) time / (device->getTarget().getTileClockFrequency() * 5.0) << std::endl;
+
     }
 
     return EXIT_SUCCESS;

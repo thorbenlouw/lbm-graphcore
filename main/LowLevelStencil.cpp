@@ -12,9 +12,10 @@
 #include <poplar/CSRFunctions.hpp>
 #include <iostream>
 #include <poplar/Program.hpp>
+#include <poplar/Graph.hpp>
 #include <poplar/Engine.hpp>
 #include <popfloat/experimental/CastToHalf.hpp> // for halfToSingle and singleToHalf
-
+#include <poplar/CycleCount.hpp>
 #include <sstream>
 
 using namespace stencil;
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]) {
 
 
     cxxopts::Options options(argv[0],
-                             " - Runs a 3x3 Gaussian Blur stencil over an input image a number of times using Poplibs on the IPU");
+                             " - Runs a 3x3 Gaussian Blur stencil over an input image a number of times using the IPU");
     options.add_options()
             ("n,num-iters", "Number of iterations", cxxopts::value<unsigned>(numIters)->default_value("1"))
             ("i,image", "filename input image (must be a 4-channel PNG image)",
@@ -75,7 +76,7 @@ int main(int argc, char *argv[]) {
         debug = opts["debug"].as<bool>();
         compileOnly = opts["compile-only"].as<bool>();
         useIpuModel = opts["ipu-model"].as<bool>();
-        if (opts.count("n") + opts.count("i") + opts.count("num-ipus") + opts.count("o") < 0) {
+        if (opts.count("n") + opts.count("i") + opts.count("num-ipus") + opts.count("o") < 4) {
             std::cerr << options.help() << std::endl;
             return EXIT_FAILURE;
         }
@@ -231,11 +232,15 @@ int main(int argc, char *argv[]) {
     stencilProgram.add(Execute(inToOut));
     stencilProgram.add(Execute(outToIn));
 
+    Sequence timedStencilProgram = Repeat(numIters, stencilProgram);
+
+    auto timing = poplar::cycleCount(graph, timedStencilProgram, 0, "timer");
+    graph.createHostRead("readTimer", timing, true);
     auto copyToDevice = Copy(inImg, imgTensor);
     auto copyBackToHost = Copy(imgTensor, outImg);
 
     const auto programs = std::vector < Program > {copyToDevice,
-                                                   Repeat(numIters, stencilProgram),
+                                                   timedStencilProgram,
                                                    copyBackToHost};
 
 
@@ -281,7 +286,7 @@ int main(int argc, char *argv[]) {
         return EXIT_SUCCESS;
     } else {
         auto engine = Engine(graph, programs,
-                             utils::POPLAR_ENGINE_OPTIONS_DEBUG);
+                             debug ? utils::POPLAR_ENGINE_OPTIONS_DEBUG : utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
 
         toc = std::chrono::high_resolution_clock::now();
         diff = std::chrono::duration_cast < std::chrono::duration < double >> (toc - tic).count();
@@ -301,6 +306,7 @@ int main(int argc, char *argv[]) {
         utils::timedStep("Running stencil iterations", [&]() -> void {
             engine.run(1);
         });
+
         utils::timedStep("Copying to host", [&]() -> void {
             engine.run(2);
         });
@@ -311,30 +317,40 @@ int main(int argc, char *argv[]) {
             engine.printProfileSummary(std::cout,
                                        OptionFlags{{"showExecutionSteps", "false"}});
         }
-    }
 
-
-    if (dataType == "half" || dataType == "half4") {
-        const auto height = fImage.height;
-        const auto width = fImage.width;
+        if (dataType == "half" || dataType == "half4") {
+            const auto height = fImage.height;
+            const auto width = fImage.width;
 #pragma omp parallel for  default(none) shared(img, float16DataBuf)  schedule(static, 4) collapse(3)
-        for (auto y = 0u; y < height; y++) {
-            for (auto x = 0u; x < width; x++) {
-                for (auto c = 0u; c < NumChannels; c++) {
-                    img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(
-                            float16DataBuf[(y * width + x) * NumChannels + c]);
+            for (auto y = 0u; y < height; y++) {
+                for (auto x = 0u; x < width; x++) {
+                    for (auto c = 0u; c < NumChannels; c++) {
+                        img[(y * width + x) * NumChannels + c] = popfloat::experimental::halfToSingle(
+                                float16DataBuf[(y * width + x) * NumChannels + c]);
+                    }
                 }
             }
+
+            delete float16DataBuf;
         }
 
-        delete float16DataBuf;
-    }
-
-    auto cImg = toCharImage(fImage);
+        auto cImg = toCharImage(fImage);
 
 
-    if (!savePng(cImg, outputFilename)) {
-        return EXIT_FAILURE;
+        if (!savePng(cImg, outputFilename)) {
+            return EXIT_FAILURE;
+        }
+        cout << "Now doing 5 runs and averaging IPU-reported timing:";
+        unsigned long ipuTimer;
+        double time = 0.;
+        for (auto run = 0u; run < 5u; run++) {
+            engine.run(1);
+            engine.readTensor("readTimer", &ipuTimer);
+            time += ipuTimer;
+        }
+        std::cout << "IPU reports " << device->getTarget().getTileClockFrequency() << "Hz clock frequency" << std::endl;
+        std::cout << "Average IPU timing for program is: "
+                  << (double) time / (device->getTarget().getTileClockFrequency() * 5.0) << std::endl;
     }
 
     return EXIT_SUCCESS;
