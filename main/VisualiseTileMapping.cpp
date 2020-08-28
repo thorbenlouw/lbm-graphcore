@@ -2,9 +2,9 @@
 #include <cstdlib>
 #include <cxxopts.hpp>
 #include <lodepng.h>
-#include "StructuredGridUtils.hpp"
+#include "include/StructuredGridUtils.hpp"
 #include <chrono>
-#include "StencilUtils.hpp"
+#include "include/ImageUtils.hpp"
 #include <iostream>
 #include <sstream>
 

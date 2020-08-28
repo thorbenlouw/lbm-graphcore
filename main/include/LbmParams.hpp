@@ -13,8 +13,6 @@
 
 namespace lbm {
 
-
-
     class Params {
     public:
         const size_t nx;

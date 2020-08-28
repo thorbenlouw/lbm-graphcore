@@ -1,6 +1,6 @@
 #include "gtest/gtest.h"
 
-#include "../../main/GraphcoreUtils.hpp"
+#include "../../main/include/GraphcoreUtils.hpp"
 #include <poplar/Device.hpp>
 #include <poplar/Graph.hpp>
 #include <poplar/Engine.hpp>
@@ -18,10 +18,10 @@ int main(int argc, char **argv) {
 }
 
 TEST(averageVelocity, testNormedVelocityVertex) {
-    auto device = lbm::getIpuModel().value();
+    auto device = utils::getIpuModel().value();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
     tensors["cells"] = graph.addVariable(FLOAT, {1, 3, 9}, "cells");
     graph.setTileMapping(tensors["cells"], 0);
     graph.setInitialValue(tensors["cells"], ArrayRef<float>{1, 2, 3, 4, 5, 6, 7, 8, 9,
@@ -47,7 +47,7 @@ TEST(averageVelocity, testNormedVelocityVertex) {
     graph.setCycleEstimate(v, 1);
     graph.setTileMapping(v, 0);
 
-    auto engine = lbm::createDebugEngine(graph, {Execute(cs)});
+    auto engine = utils::createDebugEngine(graph, {Execute(cs)});
     engine.load(device);
     engine.run();
 
@@ -76,7 +76,7 @@ TEST(averageVelocity, testMaskedSumPartial) {
     auto device = poplar::Device::createCPUDevice();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
     tensors["velocities"] = graph.addVariable(FLOAT, {1, 3}, "cells");
     graph.setTileMapping(tensors["velocities"], 0);
     graph.setInitialValue(tensors["velocities"], ArrayRef<float>{1, 100, 1000});
@@ -104,7 +104,7 @@ TEST(averageVelocity, testMaskedSumPartial) {
     graph.setCycleEstimate(v, 1);
     graph.setTileMapping(v, 0);
 
-    auto engine = lbm::createDebugEngine(graph, {Execute(cs)});
+    auto engine = utils::createDebugEngine(graph, {Execute(cs)});
     engine.load(device);
     engine.run();
 
@@ -122,7 +122,7 @@ TEST(averageVelocity, testReducePartials) {
     auto device = poplar::Device::createCPUDevice();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
     tensors["partials"] = graph.addVariable(FLOAT, {3 * 2}, "partials");
     graph.setTileMapping(tensors["partials"], 0);
     graph.setInitialValue(tensors["partials"], ArrayRef<float>{100, 2, 300, 3, 1, 1});
@@ -146,7 +146,7 @@ TEST(averageVelocity, testReducePartials) {
     graph.setCycleEstimate(v, 1);
     graph.setTileMapping(v, 0);
 
-    auto engine = lbm::createDebugEngine(graph, {Execute(cs)});
+    auto engine = utils::createDebugEngine(graph, {Execute(cs)});
     engine.load(device);
     engine.run();
 
@@ -166,7 +166,7 @@ TEST(averageVelocity, testAppendReducedSum) {
     graph.addCodelets("D2Q9Codelets.cpp");
     popops::addCodelets(graph);
 
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
     tensors["partials"] = graph.addVariable(FLOAT, {3 * 2}, "partials");
     graph.setTileMapping(tensors["partials"], 0);
     graph.setInitialValue(tensors["partials"], ArrayRef<float>{10, 5, 2, 1, 3, 9});
@@ -204,7 +204,7 @@ TEST(averageVelocity, testAppendReducedSum) {
     graph.setCycleEstimate(v, 1);
     graph.setTileMapping(v, 0);
 
-    auto engine = lbm::createDebugEngine(graph, {finalProg});
+    auto engine = utils::createDebugEngine(graph, {finalProg});
     engine.load(device);
     engine.run();
 
@@ -234,7 +234,7 @@ TEST(averageVelocity, testAppendReducedSum) {
  *  This is similar to how we will track the average velocity at each iteration of the simulation
  */
 TEST(averageVelocity, testFullAverage) {
-    auto device = lbm::getIpuModel();
+    auto device = utils::getIpuModel();
     auto graph = Graph{device.value().getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
     popops::addCodelets(graph);
@@ -244,7 +244,7 @@ TEST(averageVelocity, testFullAverage) {
                                           2, 3, 4, 5, 6, 7, 8, 9, 10,
                                           2, 3, 4, 5, 6, 7, 8, 9, 10};
 
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
     tensors["cells"] = graph.addVariable(FLOAT, {2, 2, 9}, "cells");
     graph.setTileMapping(tensors["cells"][0], 0);
     graph.setTileMapping(tensors["cells"][1], 1);
@@ -364,7 +364,7 @@ TEST(averageVelocity, testFullAverage) {
 //                                        PrintTensor(tensors["result"]),
     });
 
-    auto engine = lbm::createDebugEngine(graph, {finalProg});
+    auto engine = utils::createDebugEngine(graph, {finalProg});
     engine.load(device.value());
     engine.run();
 
@@ -408,7 +408,7 @@ TEST(accelerate, testAccelerateVertex) {
     auto device = poplar::Device::createCPUDevice();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
 
     auto nx = 3u;
     auto ny = 2u;
@@ -452,7 +452,7 @@ TEST(accelerate, testAccelerateVertex) {
     auto prog = Sequence(Execute(cs)
 //            PrintTensor(tensors["cells"])
     );
-    auto engine = lbm::createDebugEngine(graph, {prog});
+    auto engine = utils::createDebugEngine(graph, {prog});
     engine.load(device);
     engine.run();
 
@@ -487,7 +487,7 @@ enum SpeedIndexes {
 };
 
 
-void createCellsAndHalos(lbm::TensorMap &tensors, Graph &graph) {
+void createCellsAndHalos(utils::TensorMap &tensors, Graph &graph) {
     auto nx = 5u; // excluding halo
     auto ny = 3u;
     /* Input test data:
@@ -594,7 +594,7 @@ std::array<std::array<std::array<float, 9>, 5>, 3> runPropagate() {
     auto device = poplar::Device::createCPUDevice();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
 
     const auto nx = 5u; // excluding halo
     const auto ny = 3u;
@@ -630,7 +630,7 @@ std::array<std::array<std::array<float, 9>, 5>, 3> runPropagate() {
 //                         PrintTensor(tensors["tmp_cells"]
 
     );
-    auto engine = lbm::createDebugEngine(graph, {prog});
+    auto engine = utils::createDebugEngine(graph, {prog});
     engine.load(device);
     engine.run();
 
@@ -814,7 +814,7 @@ auto runCollision() -> std::array<std::array<std::array<float, 9>, 2>, 1> {
     auto device = poplar::Device::createCPUDevice();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
 
 
     const auto nx = 2u;
@@ -860,7 +860,7 @@ auto runCollision() -> std::array<std::array<std::array<float, 9>, 2>, 1> {
     graph.setTileMapping(v, 0);
 
     auto prog = Sequence(Execute(cs));
-    auto engine = lbm::createDebugEngine(graph, {prog});
+    auto engine = utils::createDebugEngine(graph, {prog});
     engine.load(device);
     engine.run();
 
@@ -933,7 +933,7 @@ TEST(rebound, testRebound) {
     auto device = poplar::Device::createCPUDevice();
     auto graph = Graph{device.getTarget()};
     graph.addCodelets("D2Q9Codelets.cpp");
-    auto tensors = lbm::TensorMap{};
+    auto tensors = utils::TensorMap{};
 
 
     const auto nx = 2u;
@@ -978,7 +978,7 @@ TEST(rebound, testRebound) {
     graph.setTileMapping(v, 0);
 
     auto prog = Sequence(Execute(cs));
-    auto engine = lbm::createDebugEngine(graph, {prog});
+    auto engine = utils::createDebugEngine(graph, {prog});
     engine.load(device);
     engine.run();
 

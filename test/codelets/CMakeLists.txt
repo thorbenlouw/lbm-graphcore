@@ -1,6 +1,5 @@
-file(GLOB SRCS *.cpp)
 include(GoogleTest)
-ADD_EXECUTABLE(test-codelets ${SRCS})
+ADD_EXECUTABLE(test-codelets main.cpp)
 
 gtest_discover_tests(test-codelets)
 TARGET_LINK_LIBRARIES(test-codelets

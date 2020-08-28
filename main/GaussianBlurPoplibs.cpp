@@ -1,10 +1,10 @@
 #include <cstdlib>
 #include <cxxopts.hpp>
 #include <lodepng.h>
-#include "StructuredGridUtils.hpp"
+#include "include/StructuredGridUtils.hpp"
 #include <chrono>
-#include "StencilUtils.hpp"
-#include "GraphcoreUtils.hpp"
+#include "include/ImageUtils.hpp"
+#include "include/GraphcoreUtils.hpp"
 #include <poplar/IPUModel.hpp>
 #include <poplar/CSRFunctions.hpp>
 #include <popops/codelets.hpp>

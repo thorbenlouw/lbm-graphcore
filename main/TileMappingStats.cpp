@@ -1,7 +1,7 @@
 
 #include <cstdlib>
 #include <cxxopts.hpp>
-#include "StructuredGridUtils.hpp"
+#include "include/StructuredGridUtils.hpp"
 #include <chrono>
 #include <iostream>
 #include <sstream>

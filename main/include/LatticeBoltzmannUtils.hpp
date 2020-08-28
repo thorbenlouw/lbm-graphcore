@@ -7,7 +7,10 @@
 
 #include <cmath>
 #include <numeric>
+#include <iostream>
+#include <iomanip>
 #include "LbmParams.hpp"
+
 
 namespace lbm {
     constexpr auto NumSpeeds = 9u;

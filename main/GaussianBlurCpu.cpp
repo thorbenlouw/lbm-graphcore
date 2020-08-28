@@ -1,9 +1,9 @@
 #include <cstdlib>
 #include <cxxopts.hpp>
 #include <lodepng.h>
-#include "StructuredGridUtils.hpp"
+#include "include/StructuredGridUtils.hpp"
 #include <chrono>
-#include "StencilUtils.hpp"
+#include "include/ImageUtils.hpp"
 
 using namespace stencil;
 
@@ -36,7 +36,7 @@ auto gaussian_blur(const float *in, float *out, const unsigned nx, const unsigne
 
 int main(int argc, char *argv[]) {
     std::string inputFilename, outputFilename;
-    unsigned numIters = 1u;
+    unsigned numIters = 100u;
 
     cxxopts::Options options(argv[0], " - Runs a 3x3 Gaussian Blur stencil over an input image a number of times");
     options.add_options()
@@ -68,6 +68,7 @@ int main(int argc, char *argv[]) {
     auto fImage = toChannelsFirst(zeroPad(toFloatImage(*maybeImg)));
     auto img = fImage.intensities.data();
 
+    numIters = 100;
     std::cout << "Running " << numIters << "(x2) iterations of stencil";
     auto tic = std::chrono::high_resolution_clock::now();
 

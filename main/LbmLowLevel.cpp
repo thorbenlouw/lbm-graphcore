@@ -10,10 +10,10 @@
 #include <random>
 #include <cxxopts.hpp>
 
-#include "GraphcoreUtils.hpp"
-#include "LbmParams.hpp"
-#include "LatticeBoltzmann.hpp"
-#include "StructuredGridUtils.hpp"
+#include "include/GraphcoreUtils.hpp"
+#include "include/LbmParams.hpp"
+#include "include/LatticeBoltzmannUtils.hpp"
+#include "include/StructuredGridUtils.hpp"
 
 
 using namespace poplar;

@@ -1,5 +1,5 @@
 #include "gtest/gtest.h"
-#include "../../main/DoubleRoll.hpp"
+#include "../../main/include/DoubleRoll.hpp"
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);

@@ -1,7 +1,7 @@
-#include "GraphcoreUtils.hpp"
-#include "LbmParams.hpp"
-#include "LatticeBoltzmann.hpp"
-#include "StructuredGridUtils.hpp"
+#include "include/GraphcoreUtils.hpp"
+#include "include/LbmParams.hpp"
+#include "include/LatticeBoltzmannUtils.hpp"
+#include "include/StructuredGridUtils.hpp"
 #include <cxxopts.hpp>
 #include <poplar/Engine.hpp>
 

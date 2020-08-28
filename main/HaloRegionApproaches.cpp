@@ -2,9 +2,9 @@
 
 #include <cstdlib>
 #include <cxxopts.hpp>
-#include "StructuredGridUtils.hpp"
+#include "include/StructuredGridUtils.hpp"
 #include <chrono>
-#include "GraphcoreUtils.hpp"
+#include "include/GraphcoreUtils.hpp"
 #include <poplar/IPUModel.hpp>
 #include <popops/Zero.hpp>
 #include <popops/codelets.hpp>

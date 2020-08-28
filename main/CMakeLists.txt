@@ -5,22 +5,26 @@ include_directories(lib/lodepng)
 include_directories(lib/cxxopts)
 
 set(Main_SRCS
-        DoubleRoll.hpp
-        GraphcoreUtils.hpp
-        LbmParams.hpp
-        LatticeBoltzmann.hpp
-        StructuredGridUtils.hpp
-        StencilUtils.hpp
+        include/DoubleRoll.hpp
+        include/GraphcoreUtils.hpp
+        include/LbmParams.hpp
+        include/LatticeBoltzmannUtils.hpp
+        include/StructuredGridUtils.hpp
+        include/ImageUtils.hpp
         )
 
-add_executable(lbm
-        lbm.cpp
+add_executable(lib_cpu
+        LbmCpu.cpp
         ${Main_SRCS}
         )
 
+add_executable(lbm_poplibs
+        LbmPoplibs.cpp
+        ${Main_SRCS}
+        )
 
-add_executable(cpu-lbm
-        CpuLbm.cpp
+add_executable(lbm_low_level
+        LbmLowLevel.cpp
         ${Main_SRCS}
         )
 
@@ -29,27 +33,27 @@ add_executable(lbm_runner
         ${Main_SRCS}
         )
 
-add_executable(low_level_stencil
-        LowLevelStencil.cpp
+
+add_executable(gb_cpu
+        GaussianBlurCpu.cpp
         lib/lodepng/lodepng.cpp
         ${Main_SRCS}
         )
 
+add_executable(gb_poplibs
+        GaussianBlurPoplibs.cpp
+        lib/lodepng/lodepng.cpp
+        ${Main_SRCS}
+        )
+
+add_executable(gb_low_level
+        GaussianBlurLowLevel.cpp
+        lib/lodepng/lodepng.cpp
+        ${Main_SRCS}
+        )
 
 add_executable(halo_regions
         HaloRegionApproaches.cpp
-        ${Main_SRCS}
-        )
-
-add_executable(poplibs_stencil
-        PoplibsStencil.cpp
-        lib/lodepng/lodepng.cpp
-        ${Main_SRCS}
-        )
-
-add_executable(cpu_stencil
-        CpuStencil.cpp
-        lib/lodepng/lodepng.cpp
         ${Main_SRCS}
         )
 
@@ -64,59 +68,46 @@ add_executable(tile_mapping_stats
         ${Main_SRCS}
         )
 
-add_executable(lbm_with_kernels
-        lbm_with_kernels.cpp
-        ${Main_SRCS}
-        )
-
-# Specify here the libraries this program depends on
-target_link_libraries(lbm
-        poplar
-        poputil
-        poplin
-        )
 
 target_link_libraries(lbm_runner
         poplar
         poputil
         )
 
+target_link_libraries(lbm_poplibs
+        poplar
+        poputil
+        poplin
+        )
+
+target_link_libraries(lbm_low_level
+        poplar
+        poputil
+        poplin
+        )
+
+target_link_libraries(gb_cpu
+        PUBLIC OpenMP::OpenMP_CXX
+        )
+
+target_link_libraries(gb_poplibs
+        poplar
+        poputil
+        poplin
+        popfloat
+        )
+
+target_link_libraries(gb_low_level
+        poplar
+        poputil
+        popfloat
+        )
 
 target_link_libraries(halo_regions
         poplar
         popops
         poputil
         )
-
-target_link_libraries(lbm_with_kernels
-        poplar
-        poputil
-        poplin
-        )
-
-
-target_link_libraries(poplibs_stencil
-        poplar
-        poputil
-        poplin
-        popfloat
-        )
-
-
-target_link_libraries(low_level_stencil
-        poplar
-        poputil
-        popfloat
-        )
-
-
-target_link_libraries(cpu_stencil
-        PUBLIC OpenMP::OpenMP_CXX
-        )
-
-install(TARGETS lbm DESTINATION bin)
-
-install(TARGETS lbm_with_kernels DESTINATION bin)
 
 configure_file(codelets/D2Q9Codelets.cpp codelets/D2Q9Codelets.cpp COPYONLY)
 configure_file(codelets/GaussianBlurCodelets.cpp codelets/GaussianBlurCodelets.cpp COPYONLY)
