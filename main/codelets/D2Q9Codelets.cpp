@@ -555,23 +555,21 @@ void firstAccel(const Params &params, const bool *obstacles, Cell *cells) {
     const float w2 = params.density * params.accel / 36.f;
     for (int ii = 0; ii < params.nx; ii++)
     {
-        /* modify the 2nd row of the grid */
-        const int jj = params.ny - 2;
         /* if the cell is not occupied and
         ** we don't send a negative density */
-        if (!obstacles[ii + jj*params.nx]
-            && (cells[ii + jj*params.nx].speeds[3] - w1) > 0.f
-            && (cells[ii + jj*params.nx].speeds[6] - w2) > 0.f
-            && (cells[ii + jj*params.nx].speeds[7] - w2) > 0.f)
+        if (!obstacles[ii]
+            && (cells[ii].speeds[3] - w1) > 0.f
+            && (cells[ii].speeds[6] - w2) > 0.f
+            && (cells[ii].speeds[7] - w2) > 0.f)
         {
             /* increase 'east-side' densities */
-            cells[ii + jj*params.nx].speeds[1] += w1;
-            cells[ii + jj*params.nx].speeds[5] += w2;
-            cells[ii + jj*params.nx].speeds[8] += w2;
+            cells[ii].speeds[1] += w1;
+            cells[ii].speeds[5] += w2;
+            cells[ii].speeds[8] += w2;
             /* decrease 'west-side' densities */
-            cells[ii + jj*params.nx].speeds[3] -= w1;
-            cells[ii + jj*params.nx].speeds[6] -= w2;
-            cells[ii + jj*params.nx].speeds[7] -= w2;
+            cells[ii].speeds[3] -= w1;
+            cells[ii].speeds[6] -= w2;
+            cells[ii].speeds[7] -= w2;
         }
     }
 }
@@ -673,7 +671,6 @@ public:
     InOut <Vector<float, VectorLayout::ONE_PTR>> cellsVec;
     Input <Vector<bool, VectorLayout::ONE_PTR>> obstaclesVec;
     int nx;
-    int ny;
     float density;
     float accel;
 
@@ -682,7 +679,7 @@ public:
         auto obstacles = reinterpret_cast<bool *>(&obstaclesVec[0]);
 
         auto params = Params {
-            .ny = ny,
+            .ny = 0,
             .nx = nx,
           .maxIters = 0,
             .omega = 0,

@@ -478,10 +478,9 @@ auto main(int argc, char *argv[]) -> int
             firstAccelCs,
             "FirstAccelVertex",
             {
-                {"cellsVec", tensors["cells"].flatten()},
-                {"obstaclesVec", tensors["obstacles"].flatten()},
+                {"cellsVec", tensors["cells"][params->ny - 2].flatten()},
+                {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
             });
-        graph.setInitialValue(firstAccelVertex["ny"], params->ny);
         graph.setInitialValue(firstAccelVertex["nx"], params->nx);
         graph.setInitialValue(firstAccelVertex["density"], params->density);
         graph.setInitialValue(firstAccelVertex["accel"], params->accel);
