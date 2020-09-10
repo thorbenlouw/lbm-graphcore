@@ -478,14 +478,27 @@ auto main(int argc, char *argv[]) -> int
             firstAccelCs,
             "FirstAccelVertex",
             {
-                {"cellsVec", tensors["cells"][params->ny - 2].flatten()},
+                {"cellsVec", tensors["cells"][params->ny - 2].slice(0, params->nx/2, 0).flatten()},
                 {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
             });
-        graph.setInitialValue(firstAccelVertex["nx"], params->nx);
+        graph.setInitialValue(firstAccelVertex["nx"], params->nx/2);
         graph.setInitialValue(firstAccelVertex["density"], params->density);
         graph.setInitialValue(firstAccelVertex["accel"], params->accel);
         graph.setCycleEstimate(firstAccelVertex, 4);
-        graph.setTileMapping(firstAccelVertex, 1);
+        graph.setTileMapping(firstAccelVertex, 31);
+
+        firstAccelVertex = graph.addVertex(
+            firstAccelCs,
+            "FirstAccelVertex",
+            {
+                {"cellsVec", tensors["cells"][params->ny - 2].slice(params->nx/2, params->nx).flatten()},
+                {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
+            });
+        graph.setInitialValue(firstAccelVertex["nx"], params->nx-params->nx/2);
+        graph.setInitialValue(firstAccelVertex["density"], params->density);
+        graph.setInitialValue(firstAccelVertex["accel"], params->accel);
+        graph.setCycleEstimate(firstAccelVertex, 4);
+        graph.setTileMapping(firstAccelVertex, 32);
 
         auto cs1 = graph.addComputeSet("cells2tmp");
 
