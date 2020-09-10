@@ -74,6 +74,17 @@ namespace grids {
         [[nodiscard]] size_t height() const { return t_height; }
 
         [[nodiscard]] Size2D size() const { return Size2D{t_width, t_height}; }
+
+        static std::string print(const Slice2D &slice) {
+            std::stringstream ss;
+            const auto x = slice.cols().from();
+            const auto y = slice.rows().from();
+            const auto w = slice.width();
+            const auto h = slice.height();
+            ss << w << "x" << h << " at  (row:" << y << ",col:" << x << ")";
+
+            return ss.str();
+        }
     };
 
     constexpr auto DefaultNumTilesPerIpu = 1216u;
@@ -119,7 +130,7 @@ namespace grids {
     };
 
 
-    typedef std::map<PartitioningTarget, Slice2D, PartitionTargetComparator> GridPartitioning;
+    typedef std::map <PartitioningTarget, Slice2D, PartitionTargetComparator> GridPartitioning;
 
     auto serializeToJson(const GridPartitioning &partitioning, const std::string &filename) {
         ofstream file;
@@ -146,6 +157,13 @@ namespace grids {
         file.close();
     }
 
+
+    const auto roundRobinFill(std::vector <size_t> &vec, const size_t numItems) {
+        for (auto i = 0u; i < vec.size(); i++) vec[i] = 0u;
+        for (auto i = 0u; i < numItems; i++)
+            vec[i % vec.size()]++;
+    }
+
     /**
      * A problem size so small we just use one tile
      */
@@ -165,7 +183,6 @@ namespace grids {
         result.insert({key, entry});
         return result;
     }
-
 
 
     /**
@@ -203,7 +220,7 @@ namespace grids {
    the min rows per tile given
  */
     auto longAndNarrowIpuStrategy(Size2D size, size_t numIpus,
-                                  size_t maxCellsPerIpu = DefaultMinRowsPerTile) -> optional<GridPartitioning> {
+                                  size_t maxCellsPerIpu = DefaultMinRowsPerTile) -> optional <GridPartitioning> {
 
         auto tileMappings = GridPartitioning{};
 
@@ -261,7 +278,7 @@ namespace grids {
  * We found that dividing work by cols is the best balance
  */
     auto shortAndWideIpuStrategy(const Size2D size, const size_t numIpus,
-                                 const size_t maxCellsPerIpu) -> optional<GridPartitioning> {
+                                 const size_t maxCellsPerIpu) -> optional <GridPartitioning> {
 
 
         auto tileMappings = GridPartitioning{};
@@ -303,7 +320,7 @@ namespace grids {
         auto C_max = min(numTiles, slice.width() / minColsPerTile);
         auto R_max = min(numTiles, slice.height() / minRowsPerTile);
         size_t tile_cols = min(C_max * 1.0, ceil(sqrt(numTiles * aspect_ratio)));
-        size_t tile_rows = min(R_max, numTiles/tile_cols);
+        size_t tile_rows = min(R_max, numTiles / tile_cols);
         assert(tile_rows * tile_cols <= numTiles);
 
         auto nonwide_width = max(minColsPerTile, slice.width() / tile_cols);
@@ -425,7 +442,7 @@ namespace grids {
                                                                                          slice.cols().to()}}});
                 r += numRows;
             }
-        } else  {
+        } else {
             auto numWorkersToUse = min(slice.width(), numWorkersPerTile);
 
             auto numColsPerWorker = (slice.width() / numWorkersToUse);
@@ -454,29 +471,93 @@ namespace grids {
      */
     auto partitionForIpus(Size2D size,
                           size_t numIpus,
-                          size_t maxCellsPerIpu) -> optional<GridPartitioning> {
+                          size_t maxCellsPerIpu) -> optional <GridPartitioning> {
         // Lost cause! Too much data
         if (size.rows() * size.cols() > maxCellsPerIpu * numIpus) return nullopt;
-
-        // How will work be more evenly split? By rows or by cols? We want most even
+//
+//        // How will work be more evenly split? By rows or by cols? We want most even
         float rowImbalance = (float) (size.rows() % numIpus) / (float) size.rows();
         float colImbalance = (float) (size.cols() % numIpus) / (float) size.cols();
+//
+//        if (rowImbalance < colImbalance) {
+//            if (auto result = longAndNarrowIpuStrategy(size, numIpus, maxCellsPerIpu); result.has_value()) {
+//                return result;
+//            } else {
+//                // Couldn't partition. Try cols?
+//                return shortAndWideIpuStrategy(size, numIpus, maxCellsPerIpu);
+//            }
+//        } else {
+//            if (auto result = shortAndWideIpuStrategy(size, numIpus, maxCellsPerIpu); result.has_value()) {
+//                return result;
+//            } else {
+//                // Couldn't partition. Try rows?
+//                return longAndNarrowIpuStrategy(size, numIpus, maxCellsPerIpu);
+//            }
+//        }
 
-        if (rowImbalance < colImbalance) {
-            if (auto result = longAndNarrowIpuStrategy(size, numIpus, maxCellsPerIpu); result.has_value()) {
-                return result;
+        auto numRows = 1;
+        auto numCols = 1;
+
+        if (numIpus == 2) {
+            if (rowImbalance < colImbalance) {
+                numRows = 2;
             } else {
-                // Couldn't partition. Try cols?
-                return shortAndWideIpuStrategy(size, numIpus, maxCellsPerIpu);
-            }
-        } else {
-            if (auto result = shortAndWideIpuStrategy(size, numIpus, maxCellsPerIpu); result.has_value()) {
-                return result;
-            } else {
-                // Couldn't partition. Try rows?
-                return longAndNarrowIpuStrategy(size, numIpus, maxCellsPerIpu);
+                numCols = 2;
             }
         }
+
+        if (numIpus == 4) {
+            numRows = 2;
+            numCols = 2;
+        }
+
+        if (numIpus == 8) {
+            if (rowImbalance < colImbalance) {
+                numRows = 4;
+                numCols = 2;
+            } else {
+                numRows = 2;
+                numCols = 4;
+            }
+        }
+
+        if (numIpus == 16) {
+            numRows = 4;
+            numCols = 4;
+        }
+
+        GridPartitioning result = {};
+
+        auto rowAllocs = std::vector<size_t>(std::min((size_t) numRows, size.rows()), 0);
+        auto colAllocs = std::vector<size_t>(std::min((size_t) numCols, size.cols()), 0);
+        roundRobinFill(rowAllocs, size.rows());
+        roundRobinFill(colAllocs, size.cols());
+
+        auto startRow = 0;
+        size_t tile = 0u;
+        for (auto row = 0u; row < rowAllocs.size(); row++) {
+            auto rowAlloc = rowAllocs[row];
+            auto startCol = 0;
+            if (rowAlloc == 0) break;
+
+            for (auto col = 0u; col < colAllocs.size(); col++) {
+                auto colAlloc = colAllocs[col];
+
+                if (colAlloc == 0) break;
+
+                auto key = PartitioningTarget{row * numCols + col, 0};
+                auto entry = Slice2D{
+                        Range(startRow, startRow + rowAlloc),
+                        Range(startCol, startCol + colAlloc)};
+                result.insert({key, entry});
+                tile++;
+                startCol += colAlloc;
+            }
+            startRow += rowAlloc;
+
+        }
+        return result;
+
     }
 
 
@@ -521,6 +602,82 @@ namespace grids {
     }
 
 
+
+    auto newTilePartitions(const GridPartitioning &ipuMappings,
+                           const size_t numTiles = DefaultNumTilesPerIpu,
+                           const size_t minRowsPerTile = DefaultMinRowsPerTile,
+                           const size_t minColsPerTile = DefaultMinColsPerTile) {
+        assert(ipuMappings.size() > 0);
+        GridPartitioning result = {};
+        for (const auto&[target, ipuSlice]: ipuMappings) {
+            auto rowAllocs = std::vector<size_t>(std::min((size_t) 38u, ipuSlice.height()), 0);
+            auto colAllocs = std::vector<size_t>(std::min((size_t) 32u, ipuSlice.width()), 0);
+            roundRobinFill(rowAllocs, ipuSlice.height());
+            roundRobinFill(colAllocs, ipuSlice.width());
+
+            auto startRow = 0;
+            size_t tile = 0u;
+            for (auto row = 0u; row < rowAllocs.size(); row++) {
+                auto rowAlloc = rowAllocs[row];
+                auto startCol = 0;
+                if (rowAlloc == 0) break;
+
+                for (auto col = 0u; col < colAllocs.size(); col++) {
+                    auto colAlloc = colAllocs[col];
+
+                    if (colAlloc == 0) break;
+
+                    auto key = PartitioningTarget{target.ipu(), tile};
+                    auto entry = Slice2D{
+                            Range(ipuSlice.rows().from() + startRow, ipuSlice.rows().from() + startRow + rowAlloc),
+                            Range(ipuSlice.cols().from() + startCol, ipuSlice.cols().from() + startCol + colAlloc)};
+                    result.insert({key, entry});
+                    tile++;
+                    startCol += colAlloc;
+                }
+
+                startRow += rowAlloc;
+
+            }
+        }
+        return result;
+
+    }
+
+    auto lbm1024x1024TilePartitions(const GridPartitioning &ipuMappings,
+                                    const size_t numTiles = DefaultNumTilesPerIpu,
+                                    const size_t minRowsPerTile = DefaultMinRowsPerTile,
+                                    const size_t minColsPerTile = DefaultMinColsPerTile) {
+
+
+        GridPartitioning result;
+
+        // Everyone gets 27ish rows (last 2 rows gets 26)
+        // Everyone gets 32 columns
+
+        auto startRow = 0;
+        for (auto row = 0u; row < 38; row++) {
+            auto rowAlloc = row >= 36 ? 26 : 27;
+            auto startCol = 0;
+            for (auto col = 0u; col < 32; col++) {
+                auto colAlloc = 32;
+
+                auto tile = row * 32 + col;
+
+                auto key = PartitioningTarget{0, tile};
+                auto entry = Slice2D{Range(startRow, startRow + rowAlloc),
+                                     Range(startCol, startCol + colAlloc)};
+
+                result.insert({key, entry});
+                startCol += colAlloc;
+            }
+            startRow += rowAlloc;
+        }
+        return result;
+
+
+    }
+
     auto toTilePartitions(const GridPartitioning &ipuMappings,
                           const size_t numTiles = DefaultNumTilesPerIpu,
                           const size_t minRowsPerTile = DefaultMinRowsPerTile,
@@ -540,18 +697,18 @@ namespace grids {
 
     class Halos {
     public:
-        const std::optional<Slice2D> top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight;
+        const std::optional <Slice2D> top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight;
 
         Halos() = delete;
 
-        Halos(std::optional<Slice2D> top,
-              std::optional<Slice2D> bottom,
-              std::optional<Slice2D> left,
-              std::optional<Slice2D> right,
-              std::optional<Slice2D> topLeft,
-              std::optional<Slice2D> topRight,
-              std::optional<Slice2D> bottomLeft,
-              std::optional<Slice2D> bottomRight) :
+        Halos(std::optional <Slice2D> top,
+              std::optional <Slice2D> bottom,
+              std::optional <Slice2D> left,
+              std::optional <Slice2D> right,
+              std::optional <Slice2D> topLeft,
+              std::optional <Slice2D> topRight,
+              std::optional <Slice2D> bottomLeft,
+              std::optional <Slice2D> bottomRight) :
                 top(std::move(top)), bottom(std::move(bottom)), left(std::move(left)), right(std::move(right)),
                 topLeft(std::move(topLeft)), topRight(std::move(topRight)),
                 bottomLeft(std::move(bottomLeft)), bottomRight(std::move(bottomRight)) {
@@ -576,42 +733,42 @@ namespace grids {
             b = y + h;
 
             auto topLeft = (t > 0 && l > 0)
-                           ? std::optional<Slice2D>{
+                           ? std::optional < Slice2D > {
                             {{(unsigned) t, (unsigned) t + 1},
                                     {(unsigned) l, (unsigned) l + 1}}}
                            : std::nullopt;
             auto top = (t > 0)
-                       ? std::optional<Slice2D>{
+                       ? std::optional < Slice2D > {
                             {{(unsigned) t, (unsigned) t + 1},
                                     {x, x + w}}}
                        : std::nullopt;
 
             auto topRight = (t > 0 && r < nx - 1)
-                            ? std::optional<Slice2D>{
+                            ? std::optional < Slice2D > {
                             {
                                     {(unsigned) t, (unsigned) t + 1},
                                     {r, r + 1}
                             }}
                             : std::nullopt;
 
-            auto left = (l > 0) ? std::optional<Slice2D>{
+            auto left = (l > 0) ? std::optional < Slice2D > {
                     {{y, y + h},
                             {(unsigned) l, (unsigned) l + 1}}} : std::nullopt;
             auto right = r < nx - 1
-                         ? std::optional<Slice2D>{{{y, y + h},
-                                                          {r, r + 1}}}
+                         ? std::optional < Slice2D > {{{y, y + h},
+                                                              {r, r + 1}}}
                          : std::nullopt;
             auto bottomLeft = (l > 0 && b < ny - 1)
-                              ? std::optional<Slice2D>{{{b, b + 1},
-                                                               {(unsigned) l, (unsigned) l + 1}}}
+                              ? std::optional < Slice2D > {{{b, b + 1},
+                                                                   {(unsigned) l, (unsigned) l + 1}}}
                               : std::nullopt;
             auto bottom = (b < ny - 1)
-                          ? std::optional<Slice2D>{
+                          ? std::optional < Slice2D > {
                             {{b, b + 1},
                                     {x, x + w}}}
                           : std::nullopt;
             auto bottomRight = (b < ny - 1) && (r < nx - 1)
-                               ? std::optional<Slice2D>{
+                               ? std::optional < Slice2D > {
                             {
                                     {b, b + 1},
                                     {r, r + 1}
@@ -621,9 +778,32 @@ namespace grids {
         }
 
 
-        // IMPORTANT! (0,0) is considered bottom left (as in LBM )
+        static auto debugHalos(const Halos &h) -> void {
+            auto printHalo = [](const std::optional <Slice2D> &slice) -> std::string {
+                std::stringstream ss;
+                if (slice.has_value()) {
+                    const auto x = slice->cols().from();
+                    const auto y = slice->rows().from();
+                    const auto w = slice->width();
+                    const auto h = slice->height();
+                    ss << w << "x" << h << " at  (row:" << y << ",col:" << x << ")";
+                }
+                return ss.str();
+            };
+            std::cout << "---" << std::endl;
+            std::cout << "Top left:     " << printHalo(h.topLeft) << std::endl;
+            std::cout << "Top:          " << printHalo(h.top) << std::endl;
+            std::cout << "Top right:    " << printHalo(h.topRight) << std::endl;
+            std::cout << "Left:         " << printHalo(h.left) << std::endl;
+            std::cout << "Right:        " << printHalo(h.right) << std::endl;
+            std::cout << "Bottom left:  " << printHalo(h.bottomLeft) << std::endl;
+            std::cout << "Bottom:       " << printHalo(h.bottom) << std::endl;
+            std::cout << "Bottom right: " << printHalo(h.bottomRight) << std::endl;
+
+        }
+
         static auto
-        forSliceBottomIs0Wraparound(Slice2D slice, Size2D matrixSize) -> Halos {
+        forSliceWithWraparound(Slice2D slice, Size2D matrixSize) -> Halos {
             // Some shorthand sugar
             const auto x = slice.cols().from();
             const auto y = slice.rows().from();
@@ -632,36 +812,36 @@ namespace grids {
             const auto nx = matrixSize.cols();
             const auto ny = matrixSize.rows();
 
-            std::optional<size_t> t, l, r, b;
-            t = (ny + y + 1) % ny;
+            std::optional <size_t> t, l, r, b;
+            t = (ny + y - 1) % ny;
             l = (nx + x - 1) % nx;
             r = (nx + x + w) % nx;
-            b = (ny + y - h) % ny;
+            b = (ny + y + h) % ny;
 
-            auto topLeft = std::optional<Slice2D>{
+            auto topLeft = std::optional < Slice2D > {
                     {{*t, *t + 1},
                             {*l, *l + 1}}};
-            auto top = std::optional<Slice2D>{
+            auto top = std::optional < Slice2D > {
                     {{*t, *t + 1},
                             {x, x + w}}};
 
-            auto topRight = std::optional<Slice2D>{
+            auto topRight = std::optional < Slice2D > {
                     {
                             {*t, *t + 1},
                             {*r, *r + 1}
                     }};
 
-            auto left = std::optional<Slice2D>{
+            auto left = std::optional < Slice2D > {
                     {{y, y + h},
                             {*l, *l + 1}}};
-            auto right = std::optional<Slice2D>{{{y, y + h},
-                                                        {*r, *r + 1}}};
-            auto bottomLeft = std::optional<Slice2D>{{{*b, *b + 1},
-                                                             {*l, *l + 1}}};
-            auto bottom = std::optional<Slice2D>{
+            auto right = std::optional < Slice2D > {{{y, y + h},
+                                                            {*r, *r + 1}}};
+            auto bottomLeft = std::optional < Slice2D > {{{*b, *b + 1},
+                                                                 {*l, *l + 1}}};
+            auto bottom = std::optional < Slice2D > {
                     {{*b, *b + 1},
                             {x, x + w}}};
-            auto bottomRight = std::optional<Slice2D>{
+            auto bottomRight = std::optional < Slice2D > {
                     {
                             {*b, *b + 1},
                             {*r, *r + 1}

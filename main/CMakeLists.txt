@@ -13,7 +13,7 @@ set(Main_SRCS
         include/ImageUtils.hpp
         )
 
-add_executable(lib_cpu
+add_executable(lbm_cpu
         LbmCpu.cpp
         ${Main_SRCS}
         )
@@ -24,7 +24,13 @@ add_executable(lbm_poplibs
         )
 
 add_executable(lbm_low_level
-        LbmLowLevel.cpp
+        LbmSimple.cpp
+        ${Main_SRCS}
+        )
+
+
+add_executable(lbm_low_level_aos
+        LbmAoS.cpp
         ${Main_SRCS}
         )
 
@@ -81,6 +87,13 @@ target_link_libraries(lbm_poplibs
         )
 
 target_link_libraries(lbm_low_level
+        poplar
+        poputil
+        poplin
+        )
+
+
+target_link_libraries(lbm_low_level_aos
         poplar
         poputil
         poplin

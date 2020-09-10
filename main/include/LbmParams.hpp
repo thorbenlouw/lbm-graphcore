@@ -65,13 +65,16 @@ namespace lbm {
     };
 
     class Obstacles {
-    private:
+    public:
         const size_t nx;
         const size_t ny;
+    private:
+
         std::unique_ptr<bool[]> data;
 
 
     public:
+
         Obstacles() = delete;
 
         auto getData() -> bool * {

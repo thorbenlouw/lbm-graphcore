@@ -21,7 +21,7 @@ using namespace poplar::program;
 
 namespace utils {
 
-    typedef std::map<std::string, Tensor> TensorMap;
+    typedef std::map <std::string, Tensor> TensorMap;
 
 
     const auto POPLAR_ENGINE_OPTIONS_DEBUG = OptionFlags{
@@ -34,7 +34,7 @@ namespace utils {
 
     const auto POPLAR_ENGINE_OPTIONS_NODEBUG = OptionFlags{};
 
-    auto getIpuModel(const unsigned short numIpus = 1) -> std::optional<Device> {
+    auto getIpuModel(const unsigned short numIpus = 1) -> std::optional <Device> {
         IPUModel ipuModel;
         ipuModel.numIPUs = numIpus;
         ipuModel.tilesPerIPU = 1216;
@@ -65,7 +65,7 @@ namespace utils {
 
     }
 
-    auto getIpuDevice(unsigned int numIpus = 1) -> std::optional<Device> {
+    auto getIpuDevice(unsigned int numIpus = 1) -> std::optional <Device> {
         DeviceManager manager = DeviceManager::createDeviceManager();
 
         // Attempt to connect to a single IPU
@@ -82,11 +82,11 @@ namespace utils {
         return std::nullopt;
     }
 
-    auto createDebugEngine(Graph &graph, ArrayRef<Program> programs) -> Engine {
+    auto createDebugEngine(Graph &graph, ArrayRef <Program> programs) -> Engine {
         return Engine(graph, programs, POPLAR_ENGINE_OPTIONS_DEBUG);
     }
 
-    auto createReleaseEngine(Graph &graph, ArrayRef<Program> programs) -> Engine {
+    auto createReleaseEngine(Graph &graph, ArrayRef <Program> programs) -> Engine {
         return Engine(graph, programs, POPLAR_ENGINE_OPTIONS_NODEBUG);
     }
 
@@ -113,8 +113,18 @@ namespace utils {
         return
                 tensor.slice(slice.rows().from(), slice.rows().to(), 0)
                         .slice(slice.cols().from(), slice.cols().to(),
-                               1).flatten();
+                               1);
     };
+
+    auto stitchHalos(const Tensor &nw, const Tensor &n, const Tensor &ne,
+                     const Tensor &w, const Tensor &m, const Tensor &e,
+                     const Tensor &sw, const Tensor &s, const Tensor &se) -> Tensor {
+        return concat({
+                              concat({nw, w, sw}),
+                              concat({n, m, s}),
+                              concat({ne, e, se})
+                      }, 1);
+    }
 
 
     const auto timedStep = [](const std::string description, auto f) -> double {
@@ -122,7 +132,7 @@ namespace utils {
         auto tic = std::chrono::high_resolution_clock::now();
         f();
         auto toc = std::chrono::high_resolution_clock::now();
-        auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(toc - tic).count();
+        auto diff = std::chrono::duration_cast < std::chrono::duration < double >> (toc - tic).count();
         std::cerr << " took " << std::right << std::setw(12) << std::setprecision(5) << diff << "s" << std::endl;
         return diff;
     };

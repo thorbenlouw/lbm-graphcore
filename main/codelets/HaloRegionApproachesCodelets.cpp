@@ -64,7 +64,6 @@ class ExtraHalosApproach : public Vertex {
 
 public:
     Input <VectorList<T, poplar::VectorListLayout::COMPACT_DELTAN, 4, false>> in;
-    Input <T> nw, ne, sw, se;
     Input <Vector<T>> n, s, w, e;
     Output <VectorList<T, poplar::VectorListLayout::COMPACT_DELTAN, 4, false>> out;
 
@@ -79,7 +78,7 @@ public:
             {
                 constexpr auto x = 0u;
                 constexpr auto y = 0u;
-                out[y][x] = stencil(*nw, n[x], n[x + 1],
+                out[y][x] = stencil(n[x], n[x+1], n[x + 2],
                                     w[y], in[y][x], in[y][x + 1],
                                     w[y + 1], in[y + 1][x], in[y + 1][x + 1]);
             }
@@ -88,7 +87,7 @@ public:
             {
                 constexpr auto y = 0u;
                 for (auto x = 1u; x < in[0].size() - 1; x++) {
-                    out[y][x] = stencil(n[x - 1], n[x], n[x + 1],
+                    out[y][x] = stencil(n[x], n[x+1], n[x + 2],
                                         in[y][x - 1], in[y][x], in[y][x + 1],
                                         in[y + 1][x - 1], in[y + 1][x], in[y + 1][x + 1]);
                 }
@@ -99,7 +98,7 @@ public:
                 const auto x = nx - 1u;
                 constexpr auto y = 0u;
                 out[y][x] =
-                        stencil(n[x - 1], n[x], *ne,
+                        stencil(n[x], n[x+1], n[x+2],
                                 in[y][x - 1], in[y][x], e[y],
                                 in[y + 1][x - 1], in[y + 1][x], e[y + 1]);
             }
@@ -141,7 +140,7 @@ public:
 
                 out[y][x] = stencil(w[y - 1], in[y - 1][x], in[y - 1][x + 1],
                                     w[y], in[y][x], in[y][x + 1],
-                                    *sw, s[x], s[x + 1]);
+                                    s[x], s[x+1], s[x + 2]);
             }
 
             // bottom
@@ -150,7 +149,7 @@ public:
                 for (auto x = 1u; x < nx - 1u; x++) {
                     out[y][x] = stencil(in[y - 1][x - 1], in[y - 1][x], in[y - 1][x + 1],
                                         in[y][x - 1], in[y][x], in[y][x + 1],
-                                        s[x - 1], s[x], s[x + 1]);
+                                        s[x ], s[x+1], s[x + 2]);
                 }
             }
 
@@ -161,7 +160,7 @@ public:
 
                 out[y][x] = stencil(in[y - 1][x - 1], in[y - 1][x], e[y - 1],
                                     in[y][x - 1], in[y][x], e[y],
-                                    s[x - 1], s[x], *se);
+                                    s[x], s[x+1], s[x+2]);
             }
             return true;
         }

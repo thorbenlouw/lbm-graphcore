@@ -21,24 +21,12 @@
 using namespace stencil;
 
 const auto vertexName(const grids::Slice2D _slice, const std::string dataType) -> std::string {
-    if (dataType == "float") {
-        if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodelet<float>";
-        else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodelet<float>";
-        else if (_slice.width() > 1) return "GaussianWide1RowBlurCodelet<float>";
-        else return "GaussianBlur1x1Codelet<float>";
-    } else if (dataType == "float2") {
-        if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodeletFloat2";
-        else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodeletFloat2";
-        else if (_slice.width() > 1) return "GaussianWide1RowBlurCodeletFloat2";
-        else return "GaussianBlur1x1CodeletFloat2";
-    } else if (dataType == "half4") {
-        if (_slice.height() > 1 && _slice.width() > 1) return "GaussianBlurCodeletHalf4";
-        else if (_slice.height() > 1) return "GaussianNarrow1ColBlurCodeletHalf4";
-        else if (_slice.width() > 1) return "GaussianWide1RowBlurCodeletHalf4";
-        else return "GaussianBlur1x1CodeletHalf4";
-    }
-    return "unknown";
-};
+    if (dataType == "float2")
+        return "GaussianBlurCodeletFloat2";
+    else if (dataType == "half4")
+        return "GaussianBlurCodeletHalf4";
+    return std::string("GaussianBlurCodelet<").append(dataType).append(">");
+}
 
 
 int main(int argc, char *argv[]) {
@@ -96,7 +84,7 @@ int main(int argc, char *argv[]) {
     auto img = fImage.intensities.data();
     void *dataBuf = img; // the float case
     uint16_t *float16DataBuf = nullptr;
-    if (dataType == "half" || dataType == "half4") {
+    if (dataType.rfind("half", 0) == 0) {
         const auto height = fImage.height;
         const auto width = fImage.width;
         float16DataBuf = new uint16_t[width * height * NumChannels];
@@ -121,7 +109,7 @@ int main(int argc, char *argv[]) {
     std::cout << "Building graph";
     auto tic = std::chrono::high_resolution_clock::now();
     auto graph = poplar::Graph(*device);
-    auto poplarType = dataType == "half4" ? HALF : FLOAT;
+    auto poplarType = (dataType.rfind("half", 0)) == 0 ? HALF : FLOAT;
     graph.addCodelets("codelets/GaussianBlurCodelets.cpp", CodeletFileType::Auto, "-O3");
     graph.addCodelets("codelets/GaussianBlurCodeletsVectorised.cpp", CodeletFileType::Auto, "-O3");
 
@@ -141,7 +129,8 @@ int main(int argc, char *argv[]) {
     auto tileLevelMappings = grids::toTilePartitions(*ipuLevelMappings, graph.getTarget().getTilesPerIPU(),
                                                      minRowsPerTile,
                                                      minColsPerTile);
-    auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings);
+    auto numWorkersPerTile = device->getTarget().getNumWorkerContexts();
+    auto workerLevelMappings = grids::toWorkerPartitions(tileLevelMappings, numWorkersPerTile);
     grids::serializeToJson(workerLevelMappings, "partitions.json");
     for (const auto &[target, slice]: tileLevelMappings) {
         graph.setTileMapping(utils::applySlice(imgTensor, slice), target.virtualTile());
@@ -161,70 +150,62 @@ int main(int argc, char *argv[]) {
         const auto _target = target;
         const auto applyOrZero = [&graph, &_target, &zeros, poplarType](const std::optional <grids::Slice2D> maybeSlice,
                                                                         Tensor &tensor,
-                                                                        const unsigned borderSize = 1u) -> Tensor {
+                                                                        const unsigned borderRows = 1u,
+                                                                        const unsigned borderCols = 1u) -> Tensor {
             if (maybeSlice.has_value()) {
                 return utils::applySlice(tensor, *maybeSlice);
             } else {
-                const auto zerosVector = graph.addConstant(poplarType, {borderSize * 4}, zeros.data(), "{0...}");
+                const auto zerosVector = graph.addConstant(poplarType, {borderRows, borderCols, 4}, zeros.data(),
+                                                           "{0...}");
                 graph.setTileMapping(zerosVector, _target.virtualTile());
                 return zerosVector;
             }
         };
 
-        auto n = applyOrZero(halos.top, imgTensor, slice.width());
-        auto s = applyOrZero(halos.bottom, imgTensor, slice.width());
-        auto e = applyOrZero(halos.right, imgTensor, slice.height());
-        auto w = applyOrZero(halos.left, imgTensor, slice.width());
+        auto n = applyOrZero(halos.top, imgTensor, 1, slice.width());
+        auto s = applyOrZero(halos.bottom, imgTensor, 1, slice.width());
+        auto e = applyOrZero(halos.right, imgTensor, slice.height(), 1);
+        auto w = applyOrZero(halos.left, imgTensor, slice.height(), 1);
         auto nw = applyOrZero(halos.topLeft, imgTensor);
         auto ne = applyOrZero(halos.topRight, imgTensor);
         auto sw = applyOrZero(halos.bottomLeft, imgTensor);
         auto se = applyOrZero(halos.bottomRight, imgTensor);
+        auto m = utils::applySlice(imgTensor, slice);
+
+        const auto inWithHalos = utils::stitchHalos(nw, n, ne, w, m, e, sw, s, se);
 
         auto v = graph.addVertex(inToOut,
                                  vertexName(slice, dataType),
                                  {
-                                         {"in",  utils::applySlice(imgTensor, slice)},
-                                         {"out", utils::applySlice(tmpImgTensor, slice)},
-                                         {"n",   n},
-                                         {"s",   s},
-                                         {"e",   e},
-                                         {"w",   w},
-                                         {"nw",  nw},
-                                         {"sw",  sw},
-                                         {"ne",  ne},
-                                         {"se",  se},
+                                         {"in",  inWithHalos.flatten()},
+                                         {"out", utils::applySlice(tmpImgTensor, slice).flatten()},
                                  }
         );
         graph.setInitialValue(v["width"], slice.width());
         graph.setInitialValue(v["height"], slice.height());
-        graph.setCycleEstimate(v, 100);
+        graph.setCycleEstimate(v, slice.width() * slice.height() * 11);
         graph.setTileMapping(v, target.virtualTile());
-        n = applyOrZero(halos.top, tmpImgTensor, slice.width());
-        s = applyOrZero(halos.bottom, tmpImgTensor, slice.width());
-        e = applyOrZero(halos.right, tmpImgTensor, slice.height());
-        w = applyOrZero(halos.left, tmpImgTensor, slice.height());
+        n = applyOrZero(halos.top, tmpImgTensor, 1, slice.width());
+        s = applyOrZero(halos.bottom, tmpImgTensor, 1, slice.width());
+        e = applyOrZero(halos.right, tmpImgTensor, slice.height(), 1);
+        w = applyOrZero(halos.left, tmpImgTensor, slice.height(), 1);
         nw = applyOrZero(halos.topLeft, tmpImgTensor);
         ne = applyOrZero(halos.topRight, tmpImgTensor);
         sw = applyOrZero(halos.bottomLeft, tmpImgTensor);
         se = applyOrZero(halos.bottomRight, tmpImgTensor);
+        m = utils::applySlice(tmpImgTensor, slice);
+        const auto outWithHalos = utils::stitchHalos(nw, n, ne, w, m, e, sw, s, se);
+
         v = graph.addVertex(outToIn,
                             vertexName(slice, dataType),
                             {
-                                    {"out", utils::applySlice(imgTensor, slice)},
-                                    {"in",  utils::applySlice(tmpImgTensor, slice)},
-                                    {"n",   n},
-                                    {"s",   s},
-                                    {"e",   e},
-                                    {"w",   w},
-                                    {"nw",  nw},
-                                    {"sw",  sw},
-                                    {"ne",  ne},
-                                    {"se",  se},
+                                    {"out", utils::applySlice(imgTensor, slice).flatten()},
+                                    {"in",  outWithHalos.flatten()}
                             }
         );
         graph.setInitialValue(v["width"], slice.width());
         graph.setInitialValue(v["height"], slice.height());
-        graph.setCycleEstimate(v, 100);
+        graph.setCycleEstimate(v, slice.width() * slice.height() * 9);
         graph.setTileMapping(v, target.virtualTile());
     }
     Sequence stencilProgram;
@@ -234,7 +215,18 @@ int main(int argc, char *argv[]) {
 
     Sequence timedStencilProgram = Repeat(numIters, stencilProgram);
 
-    auto timing = poplar::cycleCount(graph, timedStencilProgram, 0, "timer");
+    auto dummyTime = std::array<unsigned,2>{0};
+    const auto dummyTimeForModel = [&]() -> Tensor  {
+        auto tmp = graph.addConstant(UNSIGNED_INT, {1, 2}, dummyTime.data(), "{0...}");
+        graph.setTileMapping(tmp, 1215);
+        return tmp;
+    };
+    auto timing = useIpuModel ? dummyTimeForModel() :
+                  poplar::cycleCount(graph,
+                                     timedStencilProgram,
+                                     0, "timer");
+
+
     graph.createHostRead("readTimer", timing, true);
     auto copyToDevice = Copy(inImg, imgTensor);
     auto copyBackToHost = Copy(imgTensor, outImg);
@@ -318,7 +310,7 @@ int main(int argc, char *argv[]) {
                                        OptionFlags{{"showExecutionSteps", "false"}});
         }
 
-        if (dataType == "half" || dataType == "half4") {
+        if (dataType.rfind("half", 0) == 0) {
             const auto height = fImage.height;
             const auto width = fImage.width;
 #pragma omp parallel for  default(none) shared(img, float16DataBuf)  schedule(static, 4) collapse(3)
@@ -340,17 +332,18 @@ int main(int argc, char *argv[]) {
         if (!savePng(cImg, outputFilename)) {
             return EXIT_FAILURE;
         }
-        cout << "Now doing 5 runs and averaging IPU-reported timing:";
+        cout << "Now doing 5 runs and averaging IPU-reported timing:" << std::endl;
         unsigned long ipuTimer;
-        double time = 0.;
+        double clockCycles = 0.;
         for (auto run = 0u; run < 5u; run++) {
             engine.run(1);
             engine.readTensor("readTimer", &ipuTimer);
-            time += ipuTimer;
+            clockCycles += ipuTimer;
         }
-        std::cout << "IPU reports " << device->getTarget().getTileClockFrequency() << "Hz clock frequency" << std::endl;
-        std::cout << "Average IPU timing for program is: "
-                  << (double) time / (device->getTarget().getTileClockFrequency() * 5.0) << std::endl;
+        double clockFreq = device->getTarget().getTileClockFrequency();
+        std::cout << "IPU reports " << clockFreq * 1e-6 << "MHz clock frequency" << std::endl;
+        std::cout << "Average IPU timing for program is: " << std::setprecision(5)
+                  << clockCycles / 5.0 / clockFreq << "s" << std::endl;
     }
 
     return EXIT_SUCCESS;

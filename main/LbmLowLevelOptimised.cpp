@@ -14,7 +14,6 @@
 #include "include/LbmParams.hpp"
 #include "include/LatticeBoltzmannUtils.hpp"
 #include "include/StructuredGridUtils.hpp"
-#include <poplar/CycleCount.hpp>
 
 
 using namespace poplar;
@@ -30,7 +29,7 @@ averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors,
     // which represents the summed normedVelocity and count of cells which are not masked by obstacles. Now we reduce them
 
     // Do multiple reductions in parallel
-    std::vector <ComputeSet> reductionComputeSets;
+    std::vector<ComputeSet> reductionComputeSets;
     popops::reduceWithOutput(graph, tensors["perWorkerPartialCounts"],
                              tensors["reducedCount"], {0}, {popops::Operation::ADD}, reductionComputeSets,
                              "reducedCount+=perWorkerPartialCounts[i]");
@@ -113,12 +112,12 @@ collision(Graph &graph, const lbm::Params &params, TensorMap &tensors,
         auto v = graph.addVertex(collisionCs,
                                  "CollisionVertex",
                                  {
-                                         {"in",                    applySlice(tensors["tmp_cells"], slice).flatten()},
-                                         {"out",                   applySlice(tensors["cells"], slice).flatten()},
+                                         {"in",                    applySlice(tensors["tmp_cells"], slice)},
+                                         {"out",                   applySlice(tensors["cells"], slice)},
                                          {"numRows",               slice.height()},
                                          {"numCols",               slice.width()},
                                          {"omega",                 params.omega},
-                                         {"obstacles",             applySlice(tensors["obstacles"], slice).flatten()},
+                                         {"obstacles",             applySlice(tensors["obstacles"], slice)},
                                          {"normedVelocityPartial", tensors["perWorkerPartialSums"][
                                                                            tile * numWorkersPerTile +
                                                                            target.worker()]},
@@ -147,30 +146,26 @@ auto propagate(Graph &graph,
     for (const auto &[target, slice] : mappings) {
         auto tile = target.virtualTile(numTilesPerIpu);
         auto numCellsForThisWorker = slice.width() * slice.height();
-
-
-        auto halos = grids::Halos::forSliceWithWraparound(slice, fullSize);
-
-
+        auto halos = grids::Halos::forSliceBottomIs0Wraparound(slice, fullSize);
         auto v = graph.addVertex(propagateCs,
                                  "PropagateVertex",
                                  {
-                                         {"in",              applySlice(cells, slice).flatten()},
-                                         {"out",             applySlice(tensors["tmp_cells"], slice).flatten()},
+                                         {"in",              applySlice(cells, slice)},
+                                         {"out",             applySlice(tensors["tmp_cells"], slice)},
                                          {"numRows",         slice.height()},
                                          {"numCols",         slice.width()},
-                                         {"haloTop",         applySlice(cells, *halos.top).flatten()},
-                                         {"haloBottom",      applySlice(cells, *halos.bottom).flatten()},
-                                         {"haloLeft",        applySlice(cells, *halos.left).flatten()},
-                                         {"haloRight",       applySlice(cells, *halos.right).flatten()},
+                                         {"haloTop",         applySlice(cells, *halos.top)},
+                                         {"haloBottom",      applySlice(cells, *halos.bottom)},
+                                         {"haloLeft",        applySlice(cells, *halos.left)},
+                                         {"haloRight",       applySlice(cells, *halos.right)},
                                          {"haloTopLeft",     applySlice(cells,
-                                                                        *halos.topLeft).flatten()[lbm::SpeedIndexes::SouthEast]}, // flipped directions!
+                                                                        *halos.topLeft)[lbm::SpeedIndexes::SouthEast]}, // flipped directions!
                                          {"haloTopRight",    applySlice(cells,
-                                                                        *halos.topRight).flatten()[lbm::SpeedIndexes::SouthWest]},// flipped directions!
+                                                                        *halos.topRight)[lbm::SpeedIndexes::SouthWest]},// flipped directions!
                                          {"haloBottomLeft",  applySlice(cells,
-                                                                        *halos.bottomLeft).flatten()[lbm::SpeedIndexes::NorthEast]},// flipped directions!
+                                                                        *halos.bottomLeft)[lbm::SpeedIndexes::NorthEast]},// flipped directions!
                                          {"haloBottomRight", applySlice(cells,
-                                                                        *halos.bottomRight).flatten()[lbm::SpeedIndexes::NorthWest]},// flipped directions!
+                                                                        *halos.bottomRight)[lbm::SpeedIndexes::NorthWest]},// flipped directions!
                                  });
         graph.setCycleEstimate(v, numCellsForThisWorker);
         graph.setTileMapping(v, tile);
@@ -198,7 +193,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     assert(ipuLevelMapping.has_value());
     auto tileGranularityMappings = grids::toTilePartitions(
             *ipuLevelMapping,
-            numTilesPerIpu, 1, 48
+            numTilesPerIpu
     );
     auto workerGranularityMappings = grids::toWorkerPartitions(
             tileGranularityMappings,
@@ -210,18 +205,16 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
         auto tile = target.virtualTile(numTilesPerIpu);
 
         auto numCellsForThisWorker = slice.width() * slice.height();
-
         auto v = graph.addVertex(accelerateCs,
                                  "AccelerateFlowVertex",
-                                 {{"cellsInSecondRow",     applySlice(cellsSecondRowFromTop, slice).flatten()},
-                                  {"obstaclesInSecondRow", applySlice(obstaclesSecondRowFromTop, slice).flatten()},
+                                 {{"cellsInSecondRow",     applySlice(cellsSecondRowFromTop, slice)},
+                                  {"obstaclesInSecondRow", applySlice(obstaclesSecondRowFromTop, slice)},
                                   {"partitionWidth",       numCellsForThisWorker},
                                   {"density",              params.density},
                                   {"accel",                params.accel}});
         graph.setCycleEstimate(v, numCellsForThisWorker);
         graph.setTileMapping(v, tile);
     }
-
     return Execute(accelerateCs);
 }
 
@@ -230,36 +223,26 @@ auto
 timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors,
          const grids::GridPartitioning &mappings) -> Program {
     return Sequence{
-//            accelerate_flow(graph, params, tensors),
+            accelerate_flow(graph, params, tensors),
             propagate(graph, params, tensors, mappings),
-//            collision(graph, params, tensors, mappings)
+            collision(graph, params, tensors, mappings)
     };
 }
 
 auto main(int argc, char *argv[]) -> int {
     std::string outputFilename, paramsFileArg;
     unsigned numIpusArg = 1u;
-    bool debug = false;
 
     cxxopts::Options options(argv[0], " - Runs a Lattice Boltzmann graph on the IPU or IPU Model");
     options.add_options()
-            ("d,debug", "Capture profiling")
+            ("p,profile", "Capture profiling")
             ("n,num-ipus", "number of ipus to use", cxxopts::value<unsigned>(numIpusArg)->default_value("1"))
             ("params", "filename of parameters file", cxxopts::value<std::string>(paramsFileArg))
             ("o,output", "filename of compiled graph", cxxopts::value<std::string>(outputFilename));
-    try {
-        auto opts = options.parse(argc, argv);
-        debug = opts["debug"].as<bool>();
-        if (opts.count("n") + opts.count("params") + opts.count("num-ipus") + opts.count("o") < 4) {
-            std::cerr << options.help() << std::endl;
-            return EXIT_FAILURE;
-        }
-    } catch (cxxopts::OptionParseException &) {
-        std::cerr << options.help() << std::endl;
-        return EXIT_FAILURE;
-    }
+    auto opts = options.parse(argc, argv);
 
-    if (debug) {
+    auto captureProfile = opts["profile"].as<bool>();
+    if (captureProfile) {
         std::cout << "Configuring executable to capture profile information" << std::endl;
     }
 
@@ -269,21 +252,19 @@ auto main(int argc, char *argv[]) -> int {
         return EXIT_FAILURE;
     }
 
-    auto device = std::optional < Device > {};
-    if (debug) {
+    auto device = std::optional<Device>{};
+    if (captureProfile) {
         device = utils::getIpuDevice(numIpusArg);
         if (!device.has_value()) {
             return EXIT_FAILURE;
         }
     }
-//
-//    auto target = debug ? device->getTarget()
-//                        : Target::createIPUTarget(numIpusArg,
-//                                                  "ipu1",
-//                                                  debug ? utils::POPLAR_ENGINE_OPTIONS_DEBUG
-//                                                        : utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
 
-    auto  target =device->getTarget();
+    auto target = captureProfile ? device->getTarget()
+                                 : Target::createIPUTarget(numIpusArg,
+                                                           "ipu1",
+                                                           utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
+
     auto numTilesPerIpu = target.getNumTiles() / target.getNumIPUs();
     auto numWorkers = target.getNumWorkerContexts();
     auto numIpus = target.getNumIPUs();
@@ -295,7 +276,9 @@ auto main(int argc, char *argv[]) -> int {
         return EXIT_FAILURE;
     }
     const auto tileGranularityMappings = grids::toTilePartitions(*ipuLevelMapping,
-                                                                 numTilesPerIpu
+                                                                 numTilesPerIpu,
+                                                                 6,
+                                                                 6
     );
     const auto workerGranularityMappings = grids::toWorkerPartitions(
             tileGranularityMappings,
@@ -304,8 +287,8 @@ auto main(int argc, char *argv[]) -> int {
 
     grids::serializeToJson(workerGranularityMappings, "partitioning.json");
 
-    auto tensors = std::map < std::string, Tensor>{};
-    auto programs = std::vector < Program > {};
+    auto tensors = std::map<std::string, Tensor>{};
+    auto programs = std::vector<Program>{};
 
     Graph graph(target);
 
@@ -313,7 +296,7 @@ auto main(int argc, char *argv[]) -> int {
               [&]() {
                   popops::addCodelets(graph);
 
-                  graph.addCodelets("codelets/D2Q9Codelets.cpp", CodeletFileType::Auto, debug ? "" : "-O3");
+                  graph.addCodelets("D2Q9Codelets.cpp");
 
                   tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
                                                         "av_vel");
@@ -351,28 +334,21 @@ auto main(int argc, char *argv[]) -> int {
                                                                        lbm::NumSpeeds * params->nx * params->ny);
                   auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
                                                                  lbm::NumSpeeds * params->nx * params->ny);
-                  auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL,
-                                                                     params->nx * params->ny);
+//                  auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL,
+//                                                                     params->nx * params->ny);
 
-                  auto copyCellsAndObstaclesToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
+                  auto copyCellsToDevice = Sequence(Copy(inStreamCells, tensors["cells"]),
                                                                 Copy(inStreamObstacles, tensors["obstacles"]));
                   auto streamBackToHostProg = Sequence(
                           Copy(tensors["cells"], outStreamFinalCells),
                           Copy(tensors["av_vel"], outStreamAveVelocities)
                   );
-                  averageVelocity(graph, *params, tensors, workerGranularityMappings);
 
-                  auto prog = Sequence{Repeat(params->maxIters, Sequence{
+                  auto prog = Repeat(params->maxIters, Sequence{
                           timestep(graph, *params, tensors, workerGranularityMappings),
-//                          averageVelocity(graph, *params, tensors, workerGranularityMappings)
-                  })};
-                  auto timing = poplar::cycleCount(graph,
-                                                   prog,
-                                                   0, "timer");
-
-
-                  graph.createHostRead("readTimer", timing, true);
-                  programs.push_back(copyCellsAndObstaclesToDevice);
+                          averageVelocity(graph, *params, tensors, workerGranularityMappings)
+                  });
+                  programs.push_back(copyCellsToDevice);
                   programs.push_back(prog);
                   programs.push_back(streamBackToHostProg);
 
@@ -393,12 +369,12 @@ auto main(int argc, char *argv[]) -> int {
               });
 
 
-    auto exe = std::optional < Executable > {};
+    auto exe = std::optional<Executable>{};
     timedStep("Compiling graph", [&]() -> void {
         ProgressFunc progressFunc = {
                 [](int a, int b) -> void { std::cerr << "  Step " << a << " of " << b << std::endl; }};
         exe = {poplar::compileGraph(graph, programs,
-                                    debug ? POPLAR_ENGINE_OPTIONS_DEBUG : POPLAR_ENGINE_OPTIONS_NODEBUG,
+                                    captureProfile ? POPLAR_ENGINE_OPTIONS_DEBUG : POPLAR_ENGINE_OPTIONS_NODEBUG,
                                     progressFunc)};
     });
 
