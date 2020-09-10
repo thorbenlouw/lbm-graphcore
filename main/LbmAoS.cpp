@@ -488,33 +488,59 @@ auto main(int argc, char *argv[]) -> int
         graph.setCycleEstimate(firstAccelVertex, 4);
         graph.setTileMapping(firstAccelVertex, 1);
 
-        auto cs = graph.addComputeSet("lastChance");
+        auto cs1 = graph.addComputeSet("cells2tmp");
 
-        auto lastChanceVertex = graph.addVertex(
-            cs,
+        auto cells_to_tmp = graph.addVertex(
+            cs1,
             "LastHopeVertex",
             {
-                {"cellsVec", tensors["cells"].flatten()},
-                {"tmp_cellsVec", tensors["tmp_cells"].flatten()},
+                {"cells_oldVec", tensors["cells"].flatten()},
+                {"cells_newVec", tensors["tmp_cells"].flatten()},
                 {"obstaclesVec", tensors["obstacles"].flatten()},
-                {"av_velsVec", tensors["av_vel"].flatten()}
+                {"av_vel", tensors["perWorkerPartialSums"][0]}
             });
-        graph.setInitialValue(lastChanceVertex["ny"], params->ny);
-        graph.setInitialValue(lastChanceVertex["nx"], params->nx);
-        graph.setInitialValue(lastChanceVertex["maxIters"], params->maxIters);
-        graph.setInitialValue(lastChanceVertex["omega"], params->omega);
-        graph.setInitialValue(lastChanceVertex["one_minus_omega"], 1.f - params->omega);
-        graph.setInitialValue(lastChanceVertex["density"], params->density);
-        graph.setInitialValue(lastChanceVertex["accel"], params->accel);
-        graph.setInitialValue(lastChanceVertex["total_free_cells"], numNonObstacleCells);
-        graph.setCycleEstimate(lastChanceVertex, 4);
-        graph.setTileMapping(lastChanceVertex, 0);
+        graph.setInitialValue(cells_to_tmp["ny"], params->ny);
+        graph.setInitialValue(cells_to_tmp["nx"], params->nx);
+        graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
+        graph.setInitialValue(cells_to_tmp["omega"], params->omega);
+        graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
+        graph.setInitialValue(cells_to_tmp["density"], params->density);
+        graph.setInitialValue(cells_to_tmp["accel"], params->accel);
+        graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
+        graph.setCycleEstimate(cells_to_tmp, 4);
+        graph.setTileMapping(cells_to_tmp, 0);
+
+
+        auto cs2 = graph.addComputeSet("tmp2cells");
+
+        auto tmp_to_cells = graph.addVertex(
+            cs2,
+            "LastHopeVertex",
+            {
+                {"cells_oldVec", tensors["tmp_cells"].flatten()},
+                {"cells_newVec", tensors["cells"].flatten()},
+                {"obstaclesVec", tensors["obstacles"].flatten()},
+                {"av_vel", tensors["perWorkerPartialSums"][0]}
+            });
+        graph.setInitialValue(tmp_to_cells["ny"], params->ny);
+        graph.setInitialValue(tmp_to_cells["nx"], params->nx);
+        graph.setInitialValue(tmp_to_cells["maxIters"], params->maxIters);
+        graph.setInitialValue(tmp_to_cells["omega"], params->omega);
+        graph.setInitialValue(tmp_to_cells["one_minus_omega"], 1.f - params->omega);
+        graph.setInitialValue(tmp_to_cells["density"], params->density);
+        graph.setInitialValue(tmp_to_cells["accel"], params->accel);
+        graph.setInitialValue(tmp_to_cells["total_free_cells"], numNonObstacleCells);
+        graph.setCycleEstimate(tmp_to_cells, 4);
+        graph.setTileMapping(tmp_to_cells, 0);
+
 
         auto prog = Sequence();
          poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
                                                     "no stochastic rounding");
+        auto avVelsNode = averageVelocity(graph, *params, tensors, workerGranularityMappings);
+
         prog.add(Execute(firstAccelCs));
-        prog.add(Execute(cs));
+        prog.add(Repeat(params->maxIters/2, Sequence(Execute(cs1),avVelsNode, Execute(cs2), avVelsNode)));
 
             //   accelerate_flow(graph, *params, tensors, numWorkersPerTile),
             //   Repeat(params->maxIters / 2, Sequence{

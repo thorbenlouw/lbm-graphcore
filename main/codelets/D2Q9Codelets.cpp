@@ -548,13 +548,7 @@ struct Params {
 void firstAccel(const Params &params, const bool *obstacles, Cell *cells);
 auto nuevo(const Params &params, const Cell *cells_old, Cell *cells_new, const bool *obstacles) -> float;
 
-void outerLoop(const Params &params, Cell *cells, Cell *tmp_cells, const bool* obstacles, float *av_vels) {
-    for (int iters = 0; iters < params.maxIters; iters++) {
-        auto cells_old = iters % 2 ? tmp_cells : cells;
-        auto cells_new = iters % 2 ? cells : tmp_cells;
-        av_vels[iters] = nuevo(params, cells_old, cells_new, obstacles);
-    }
-}
+
 
 void firstAccel(const Params &params, const bool *obstacles, Cell *cells) {
     const float w1 = params.density * params.accel / 9.f;
@@ -707,10 +701,10 @@ public:
 class LastHopeVertex : public Vertex {
 
 public:
-    InOut <Vector<float, VectorLayout::ONE_PTR>> cellsVec;
-    InOut <Vector<float, VectorLayout::ONE_PTR>> tmp_cellsVec;
+    Input <Vector<float, VectorLayout::ONE_PTR>> cells_oldVec;
+    Output <Vector<float, VectorLayout::ONE_PTR>> cells_newVec;
     Input <Vector<bool, VectorLayout::ONE_PTR>> obstaclesVec;
-    Output <Vector<float, VectorLayout::ONE_PTR>> av_velsVec;
+    Output <float> av_vel;
     int ny;
     int nx;
     int maxIters;
@@ -718,16 +712,13 @@ public:
     float one_minus_omega;
     float density;
     float accel;
+    float iter;
     int total_free_cells;
 
-
-
-
     bool compute() {
-        auto cells = reinterpret_cast<Cell *>(&cellsVec[0]);
-        auto tmp_cells = reinterpret_cast<Cell *>(&tmp_cellsVec[0]);
+        auto cells_old = reinterpret_cast<Cell *>(&cells_oldVec[0]);
+        auto cells_new = reinterpret_cast<Cell *>(&cells_newVec[0]);
         auto obstacles = reinterpret_cast<bool *>(&obstaclesVec[0]);
-        auto av_vels = reinterpret_cast<float *>(&av_velsVec[0]);
 
         auto params = Params {
             .ny = ny,
@@ -740,8 +731,16 @@ public:
             .total_free_cells = total_free_cells
         };
 
-        outerLoop(params, cells, tmp_cells, obstacles, av_vels);
+        *av_vel = nuevo(params, cells_old, cells_new, obstacles);
+    
+    
 
         return true;
     }
 };
+
+/*
+Total compute time was         4.274s
+Reynolds number:        1.541786193848e+02
+HOST total density: 1.024019470215e+02
+*/
