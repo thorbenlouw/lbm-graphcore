@@ -472,6 +472,21 @@ auto main(int argc, char *argv[]) -> int
             Copy(tensors["av_vel"], outStreamAveVelocities));
 
         averageVelocity(graph, *params, tensors, workerGranularityMappings);
+        auto firstAccelCs = graph.addComputeSet("firstAccel");
+
+        auto firstAccelVertex = graph.addVertex(
+            firstAccelCs,
+            "FirstAccelVertex",
+            {
+                {"cellsVec", tensors["cells"].flatten()},
+                {"obstaclesVec", tensors["obstacles"].flatten()},
+            });
+        graph.setInitialValue(firstAccelVertex["ny"], params->ny);
+        graph.setInitialValue(firstAccelVertex["nx"], params->nx);
+        graph.setInitialValue(firstAccelVertex["density"], params->density);
+        graph.setInitialValue(firstAccelVertex["accel"], params->accel);
+        graph.setCycleEstimate(firstAccelVertex, 4);
+        graph.setTileMapping(firstAccelVertex, 1);
 
         auto cs = graph.addComputeSet("lastChance");
 
@@ -495,9 +510,11 @@ auto main(int argc, char *argv[]) -> int
         graph.setCycleEstimate(lastChanceVertex, 4);
         graph.setTileMapping(lastChanceVertex, 0);
 
-        auto prog = Sequence
-        {
-            Execute(cs)
+        auto prog = Sequence();
+         poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
+                                                    "no stochastic rounding");
+        prog.add(Execute(firstAccelCs));
+        prog.add(Execute(cs));
 
             //   accelerate_flow(graph, *params, tensors, numWorkersPerTile),
             //   Repeat(params->maxIters / 2, Sequence{
@@ -511,9 +528,8 @@ auto main(int argc, char *argv[]) -> int
 
             //                          totalDensity(graph, *params, tensors),
             //                          PrintTensor("totalDensity (after): ", tensors["totalDensity"])
-        };
-                  poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
-                                                    "no stochastic rounding");
+        
+                 
 
                   auto copyCellsAndObstaclesToDevice = Sequence();
                   popops::zero(graph, tensors["av_vel"], copyCellsAndObstaclesToDevice, "av_vels=0");

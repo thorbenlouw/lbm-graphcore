@@ -549,7 +549,6 @@ void firstAccel(const Params &params, const bool *obstacles, Cell *cells);
 auto nuevo(const Params &params, const Cell *cells_old, Cell *cells_new, const bool *obstacles) -> float;
 
 void outerLoop(const Params &params, Cell *cells, Cell *tmp_cells, const bool* obstacles, float *av_vels) {
-    firstAccel(params, obstacles, cells);
     for (int iters = 0; iters < params.maxIters; iters++) {
         auto cells_old = iters % 2 ? tmp_cells : cells;
         auto cells_new = iters % 2 ? cells : tmp_cells;
@@ -674,6 +673,36 @@ auto nuevo(const Params &params, const Cell *cells_old, Cell *cells_new, const b
 }
 
 
+class FirstAccelVertex : public Vertex {
+
+public:
+    InOut <Vector<float, VectorLayout::ONE_PTR>> cellsVec;
+    Input <Vector<bool, VectorLayout::ONE_PTR>> obstaclesVec;
+    int nx;
+    int ny;
+    float density;
+    float accel;
+
+    bool compute() {
+        auto cells = reinterpret_cast<Cell *>(&cellsVec[0]);
+        auto obstacles = reinterpret_cast<bool *>(&obstaclesVec[0]);
+
+        auto params = Params {
+            .ny = ny,
+            .nx = nx,
+          .maxIters = 0,
+            .omega = 0,
+            .one_minus_omega = 0,
+            .density = density,
+            .accel = accel,
+            .total_free_cells = 0
+        };
+
+        firstAccel(params, obstacles, cells);
+
+        return true;
+    }
+};
 
 class LastHopeVertex : public Vertex {
 
