@@ -34,6 +34,11 @@ add_executable(lbm_low_level_aos
         ${Main_SRCS}
         )
 
+
+add_executable(compareLbm
+        LastChance.cpp
+        )
+
 add_executable(lbm_runner
         LbmRunner.cpp
         ${Main_SRCS}
