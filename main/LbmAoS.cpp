@@ -1,5 +1,3 @@
-
-
 #include <cstdlib>
 #include <poplar/IPUModel.hpp>
 #include <popops/Reduce.hpp>
@@ -29,7 +27,6 @@ auto averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors
 {
 
     // As part of collision we already calculated a partialSum (float) and partialCount (unsigned) for each worker
-    // which represents the summed normedVelocity and count of cells which are not masked by obstacles. Now we reduce them
     // which represents the summed normedVelocity and count of cells which are not masked by obstacles. Now we reduce them
 
     // Do multiple reductions in parallel
@@ -94,192 +91,6 @@ auto averageVelocity(Graph &graph, const lbm::Params &params, TensorMap &tensors
     seq.add(Execute(incrementCs));
     return std::move(seq);
 }
-
-auto totalDensity(Graph &graph, const lbm::Params &params, TensorMap &tensors) -> Sequence
-{
-    auto s = Sequence();
-    tensors["totalDensity"] = popops::reduce(graph, tensors["cells"], FLOAT, {2, 1, 0},
-                                             {popops::Operation::ADD, false}, s);
-    return s;
-}
-
-auto collision(Graph &graph, const lbm::Params &params, TensorMap &tensors,
-               const grids::GridPartitioning &mappings, const unsigned numWorkersPerTile) -> Program
-{
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
-
-    ComputeSet collisionCs = graph.addComputeSet("collision");
-
-    for (const auto &[target, slice] : mappings)
-    {
-        auto tile = target.virtualTile(numTilesPerIpu);
-        auto numCellsForThisWorker = slice.width() * slice.height();
-
-        auto v = graph.addVertex(collisionCs,
-                                 "CollisionVertex",
-                                 {{"in", applySlice(tensors["tmp_cells"], slice).flatten()},
-                                  {"out", applySlice(tensors["cells"], slice).flatten()},
-                                  {"obstacles", applySlice(tensors["obstacles"], slice).flatten()},
-                                  {"normedVelocityPartial", tensors["perWorkerPartialSums"][tile * numWorkersPerTile +
-                                                                                            target.worker()]}});
-        graph.setInitialValue(v["width"], slice.width());
-        graph.setInitialValue(v["height"], slice.height());
-        graph.setInitialValue(v["omega"], params.omega);
-
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-    }
-
-    return Execute(collisionCs);
-}
-
-auto propagate(Graph &graph,
-               const lbm::Params &params, TensorMap &tensors,
-               const grids::GridPartitioning &mappings, const unsigned numWorkersPerTile) -> Program
-{
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
-
-    ComputeSet in2outCs = graph.addComputeSet("in2out");
-    ComputeSet out2inCs = graph.addComputeSet("out2in");
-    auto cells = tensors["cells"];
-
-    auto fullSize = grids::Size2D(params.ny, params.nx);
-
-    for (const auto &[target, slice] : mappings)
-    {
-
-        auto tile = target.virtualTile(numTilesPerIpu);
-        auto numCellsForThisWorker = slice.width() * slice.height();
-
-        auto halos = grids::Halos::forSliceWithWraparound(slice, fullSize);
-
-        auto inWithHalos = stitchHalos(applySlice(cells, *halos.topLeft), applySlice(cells, *halos.top),
-                                       applySlice(cells, *halos.topRight),
-                                       applySlice(cells, *halos.left), applySlice(cells, slice),
-                                       applySlice(cells, *halos.right),
-                                       applySlice(cells, *halos.bottomLeft), applySlice(cells, *halos.bottom),
-                                       applySlice(cells, *halos.bottomRight))
-                               .flatten();
-        auto v = graph.addVertex(in2outCs,
-                                 "PropagateVertexAoS",
-                                 {
-                                     {"in", inWithHalos},
-                                     {"out", applySlice(tensors["tmp_cells"], slice).flatten()},
-                                 });
-        graph.setInitialValue(v["width"], slice.width());
-        graph.setInitialValue(v["height"], slice.height());
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-
-        inWithHalos = stitchHalos(applySlice(tensors["tmp_cells"], *halos.topLeft),
-                                  applySlice(tensors["tmp_cells"], *halos.top),
-                                  applySlice(tensors["tmp_cells"], *halos.topRight),
-                                  applySlice(tensors["tmp_cells"], *halos.left),
-                                  applySlice(tensors["tmp_cells"], slice),
-                                  applySlice(tensors["tmp_cells"], *halos.right),
-                                  applySlice(tensors["tmp_cells"], *halos.bottomLeft),
-                                  applySlice(tensors["tmp_cells"], *halos.bottom),
-                                  applySlice(tensors["tmp_cells"], *halos.bottomRight))
-                          .flatten();
-        v = graph.addVertex(out2inCs,
-                            "PropagateVertexAoS",
-                            {{"in", inWithHalos},
-                             {"out", applySlice(tensors["cells"], slice).flatten()}});
-        graph.setInitialValue(v["width"], slice.width());
-        graph.setInitialValue(v["height"], slice.height());
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-    }
-
-    return Sequence{Execute(in2outCs), Execute(out2inCs)};
-}
-
-auto combo(Graph &graph,
-           const lbm::Params &params, TensorMap &tensors,
-           const grids::GridPartitioning &mappings, const unsigned numWorkersPerTile) -> Program
-{
-    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
-
-    ComputeSet in2outCs = graph.addComputeSet("in2out");
-    ComputeSet out2inCs = graph.addComputeSet("out2in");
-    auto cells = tensors["cells"];
-
-    auto fullSize = grids::Size2D(params.ny, params.nx);
-
-    auto i = 0;
-    for (const auto &[target, slice] : mappings)
-    {
-        i++;
-        // Accelerate if vertex is responsible for row  params.ny - 2
-        auto isAcceleratingVertex = (slice.rows().from() <= params.ny - 2) && (slice.rows().to() > params.ny - 2);
-        auto rowToAccelerate = (isAcceleratingVertex) ? params.ny - 2 - slice.rows().from() : 0;
-
-        auto tile = target.virtualTile(numTilesPerIpu);
-        auto numCellsForThisWorker = slice.width() * slice.height();
-
-        auto halos = grids::Halos::forSliceWithWraparound(slice, fullSize);
-
-        auto inWithHalos = stitchHalos(applySlice(cells, *halos.topLeft), applySlice(cells, *halos.top),
-                                       applySlice(cells, *halos.topRight),
-                                       applySlice(cells, *halos.left), applySlice(cells, slice),
-                                       applySlice(cells, *halos.right),
-                                       applySlice(cells, *halos.bottomLeft), applySlice(cells, *halos.bottom),
-                                       applySlice(cells, *halos.bottomRight))
-                               .flatten();
-        auto v = graph.addVertex(in2outCs,
-                                 "LbmVertex",
-                                 {{"in", inWithHalos},
-                                  {"out", applySlice(tensors["tmp_cells"], slice).flatten()},
-                                  {"obstacles", applySlice(tensors["obstacles"], slice).flatten()},
-                                  {"normedVelocityPartial", tensors["perWorkerPartialSums"][tile * numWorkersPerTile +
-                                                                                            target.worker()]}});
-        graph.setInitialValue(v["width"], slice.width());
-        graph.setInitialValue(v["height"], slice.height());
-        graph.setInitialValue(v["isAcceleratingVertex"], isAcceleratingVertex);
-        graph.setInitialValue(v["rowToAccelerate"], rowToAccelerate);
-        graph.setInitialValue(v["omega"], params.omega);
-        graph.setInitialValue(v["oneMinusOmega"], 1.f - params.omega);
-        graph.setInitialValue(v["w1"], params.density * params.accel / 9.0f);
-        graph.setInitialValue(v["w2"], params.density * params.accel / 36.0f);
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-
-        inWithHalos = stitchHalos(applySlice(tensors["tmp_cells"], *halos.topLeft),
-                                  applySlice(tensors["tmp_cells"], *halos.top),
-                                  applySlice(tensors["tmp_cells"], *halos.topRight),
-                                  applySlice(tensors["tmp_cells"], *halos.left),
-                                  applySlice(tensors["tmp_cells"], slice),
-                                  applySlice(tensors["tmp_cells"], *halos.right),
-                                  applySlice(tensors["tmp_cells"], *halos.bottomLeft),
-                                  applySlice(tensors["tmp_cells"], *halos.bottom),
-                                  applySlice(tensors["tmp_cells"], *halos.bottomRight))
-                          .flatten();
-        v = graph.addVertex(out2inCs,
-                            "LbmVertex",
-                            {{"in", inWithHalos},
-                             {"out", applySlice(tensors["cells"], slice).flatten()},
-                             {"obstacles", applySlice(tensors["obstacles"], slice).flatten()},
-                             {"normedVelocityPartial", tensors["perWorkerPartialSums"][tile * numWorkersPerTile +
-                                                                                       target.worker()]}});
-        graph.setInitialValue(v["width"], slice.width());
-        graph.setInitialValue(v["height"], slice.height());
-        graph.setInitialValue(v["isAcceleratingVertex"], isAcceleratingVertex);
-        graph.setInitialValue(v["rowToAccelerate"], rowToAccelerate);
-        graph.setInitialValue(v["omega"], params.omega);
-        graph.setInitialValue(v["oneMinusOmega"], 1.f - params.omega);
-        graph.setInitialValue(v["w1"], params.density * params.accel / 9.0f);
-        graph.setInitialValue(v["w2"], params.density * params.accel / 36.0f);
-
-        graph.setCycleEstimate(v, numCellsForThisWorker);
-        graph.setTileMapping(v, tile);
-    }
-    printf("Add %d LbmVertex instances\n", i * 2);
-
-    const auto doAverage = averageVelocity(graph, params, tensors, mappings);
-
-    return Sequence{Execute(in2outCs), doAverage, Execute(out2inCs), doAverage};
-}
-
 auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors,
                      const unsigned numWorkersPerTile) -> Program
 {
@@ -321,14 +132,87 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
     return Execute(accelerateCs);
 }
 
-auto timestep(Graph &graph, const lbm::Params &params, TensorMap &tensors,
-              const grids::GridPartitioning &mappings, const unsigned numWorkersPerTile) -> Program
+auto two_timesteps(Graph &graph, const lbm::Params &params, TensorMap &tensors,
+                   const grids::GridPartitioning &mappings, const unsigned numWorkersPerTile,
+                   const int numNonObstacleCells) -> Program
 {
-    return Sequence{
+    const auto numTilesPerIpu = graph.getTarget().getNumTiles() / graph.getTarget().getNumIPUs();
 
-        combo(graph, params, tensors, mappings, numWorkersPerTile),
+    ComputeSet in2outCs = graph.addComputeSet("in2out");
+    ComputeSet out2inCs = graph.addComputeSet("out2in");
+    auto fullSize = grids::Size2D(params.ny, params.nx);
+    auto workerNum = 0;
+    for (const auto &[target, slice] : mappings)
+    {
+        auto tile = target.virtualTile(numTilesPerIpu);
+        auto numCellsForThisWorker = slice.width() * slice.height();
+        const bool do_i_own_lid = slice.rows().from() <= params.ny - 2 && slice.rows().to() > params.ny - 2;
+        const int which_of_my_rows_is_lid = do_i_own_lid ? params.ny - 2 - slice.rows().from() : -1;
+        auto halos = grids::Halos::forSliceWithWraparound(slice, fullSize);
+        auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
+                                           utils::applySlice(tensors["cells"], *halos.top),
+                                           utils::applySlice(tensors["cells"], *halos.topRight),
+                                           utils::applySlice(tensors["cells"], *halos.left),
+                                           utils::applySlice(tensors["cells"], slice),
+                                           utils::applySlice(tensors["cells"], *halos.right),
+                                           utils::applySlice(tensors["cells"], *halos.bottomLeft),
+                                           utils::applySlice(tensors["cells"], *halos.bottom),
+                                           utils::applySlice(tensors["cells"], *halos.bottomRight));
 
-    };
+        auto v = graph.addVertex(in2outCs,
+                                 "LbmTimeStepVertex",
+                                 {{"cells_oldVec", stitched.flatten()},
+                                  {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
+                                  {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
+                                  {"av_vel", tensors["perWorkerPartialSums"][workerNum]}});
+        graph.setInitialValue(v["ny"], slice.height());
+        graph.setInitialValue(v["nx"], slice.width());
+        graph.setInitialValue(v["maxIters"], params.maxIters);
+        graph.setInitialValue(v["omega"], params.omega);
+        graph.setInitialValue(v["one_minus_omega"], 1.f - params.omega);
+        graph.setInitialValue(v["density"], params.density);
+        graph.setInitialValue(v["accel"], params.accel);
+        graph.setInitialValue(v["isAccelerate"], do_i_own_lid);
+        graph.setInitialValue(v["rowToAccelerate"], which_of_my_rows_is_lid);
+        graph.setInitialValue(v["total_free_cells"], numNonObstacleCells);
+        graph.setCycleEstimate(v, numCellsForThisWorker);
+        graph.setTileMapping(v, tile);
+
+        stitched = utils::stitchHalos(utils::applySlice(tensors["tmp_cells"], *halos.topLeft),
+                                      utils::applySlice(tensors["tmp_cells"], *halos.top),
+                                      utils::applySlice(tensors["tmp_cells"], *halos.topRight),
+                                      utils::applySlice(tensors["tmp_cells"], *halos.left),
+                                      utils::applySlice(tensors["tmp_cells"], slice),
+                                      utils::applySlice(tensors["tmp_cells"], *halos.right),
+                                      utils::applySlice(tensors["tmp_cells"], *halos.bottomLeft),
+                                      utils::applySlice(tensors["tmp_cells"], *halos.bottom),
+                                      utils::applySlice(tensors["tmp_cells"], *halos.bottomRight));
+
+        v = graph.addVertex(out2inCs,
+                            "LbmTimeStepVertex",
+                            {{"cells_oldVec", stitched.flatten()},
+                             {"cells_newVec", utils::applySlice(tensors["cells"], slice).flatten()},
+                             {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
+                             {"av_vel", tensors["perWorkerPartialSums"][workerNum]}});
+        graph.setInitialValue(v["ny"], slice.height());
+        graph.setInitialValue(v["nx"], slice.width());
+        graph.setInitialValue(v["maxIters"], params.maxIters);
+        graph.setInitialValue(v["omega"], params.omega);
+        graph.setInitialValue(v["one_minus_omega"], 1.f - params.omega);
+        graph.setInitialValue(v["density"], params.density);
+        graph.setInitialValue(v["accel"], params.accel);
+        graph.setInitialValue(v["isAccelerate"], do_i_own_lid);
+        graph.setInitialValue(v["rowToAccelerate"], which_of_my_rows_is_lid);
+        graph.setInitialValue(v["total_free_cells"], numNonObstacleCells);
+        graph.setCycleEstimate(v, numCellsForThisWorker);
+        graph.setTileMapping(v, tile);
+
+        workerNum++;
+    }
+
+    const auto doAverage = averageVelocity(graph, params, tensors, mappings);
+
+    return Sequence{Execute(in2outCs), doAverage, Execute(out2inCs), doAverage};
 }
 
 auto main(int argc, char *argv[]) -> int
@@ -406,11 +290,9 @@ auto main(int argc, char *argv[]) -> int
 
     grids::serializeToJson(*ipuLevelMapping, "ipu-mapping.json");
 
-    const auto tileGranularityMappings = grids::newTilePartitions(*ipuLevelMapping,
+    const auto tileGranularityMappings = grids::toTilePartitions(*ipuLevelMapping,
                                                                   numTilesPerIpu);
 
-    //    const auto tileGranularityMappings = grids::lbm1024x1024TilePartitions(*ipuLevelMapping,
-    //                                                                    numTilesPerIpu);
     const auto workerGranularityMappings = grids::toWorkerPartitions(
         tileGranularityMappings, numWorkersPerTile);
 
@@ -425,7 +307,7 @@ auto main(int argc, char *argv[]) -> int
               [&]() {
                   popops::addCodelets(graph);
 
-                  graph.addCodelets("codelets/D2Q9Codelets.cpp", CodeletFileType::Auto, debug ? "-d" : "-O3");
+                  graph.addCodelets("codelets/D2Q9Codelets.cpp", CodeletFileType::Auto, debug ? "-g" : "-O3");
 
                   tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
                                                         "av_vel");
@@ -464,176 +346,15 @@ auto main(int argc, char *argv[]) -> int
                       Copy(tensors["cells"], outStreamFinalCells),
                       Copy(tensors["av_vel"], outStreamAveVelocities));
 
-                  // ------------ CELLS2TMP
-                  auto cs1 = graph.addComputeSet("cells2tmp");
-
-                  auto size = grids::Size2D(params->ny, params->nx);
-                  {
-                      auto slice = grids::Slice2D(grids::Range(0, params->ny / 2), grids::Range(0, params->nx));
-                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
-                      grids::Halos::debugHalos(halos);
-                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
-                                                         utils::applySlice(tensors["cells"], *halos.top),
-                                                         utils::applySlice(tensors["cells"], *halos.topRight),
-                                                         utils::applySlice(tensors["cells"], *halos.left),
-                                                         utils::applySlice(tensors["cells"], slice),
-                                                         utils::applySlice(tensors["cells"], *halos.right),
-                                                         utils::applySlice(tensors["cells"], *halos.bottomLeft),
-                                                         utils::applySlice(tensors["cells"], *halos.bottom),
-                                                         utils::applySlice(tensors["cells"], *halos.bottomRight));
-                      const bool do_i_own_lid = slice.rows().from() <= params->ny - 2 && slice.rows().to() >= params->ny - 2;
-                      const int which_of_my_rows_is_lid = do_i_own_lid ? params->ny - 2 - slice.rows().from() : -1;
-                      auto cells_to_tmp = graph.addVertex(
-                          cs1,
-                          "LbmTimeStepVertex",
-                          {{"cells_oldVec", stitched.flatten()},
-                           {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
-                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
-                           {"av_vel", tensors["perWorkerPartialSums"][0]}});
-                      graph.setInitialValue(cells_to_tmp["ny"], params->ny / 2);
-                      graph.setInitialValue(cells_to_tmp["nx"], params->nx);
-                      graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
-                      graph.setInitialValue(cells_to_tmp["omega"], params->omega);
-                      graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
-                      graph.setInitialValue(cells_to_tmp["density"], params->density);
-                      graph.setInitialValue(cells_to_tmp["accel"], params->accel);
-                      graph.setInitialValue(cells_to_tmp["isAccelerate"], do_i_own_lid);
-                      graph.setInitialValue(cells_to_tmp["rowToAccelerate"], which_of_my_rows_is_lid);
-                      graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
-                      graph.setCycleEstimate(cells_to_tmp, 4);
-                      graph.setTileMapping(cells_to_tmp, 500);
-                  }
-
-                  {
-                      auto slice = grids::Slice2D(grids::Range(params->ny / 2, params->ny), grids::Range(0, params->nx));
-                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
-                      grids::Halos::debugHalos(halos);
-                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
-                                                         utils::applySlice(tensors["cells"], *halos.top),
-                                                         utils::applySlice(tensors["cells"], *halos.topRight),
-                                                         utils::applySlice(tensors["cells"], *halos.left),
-                                                         utils::applySlice(tensors["cells"], slice),
-                                                         utils::applySlice(tensors["cells"], *halos.right),
-                                                         utils::applySlice(tensors["cells"], *halos.bottomLeft),
-                                                         utils::applySlice(tensors["cells"], *halos.bottom),
-                                                         utils::applySlice(tensors["cells"], *halos.bottomRight));
-                      const bool do_i_own_lid = slice.rows().from() <= params->ny - 2 && slice.rows().to() >= params->ny - 2;
-                      const int which_of_my_rows_is_lid = do_i_own_lid ? params->ny - 2 - slice.rows().from() : -1;
-
-                      auto cells_to_tmp = graph.addVertex(
-                          cs1,
-                          "LbmTimeStepVertex",
-                          {{"cells_oldVec", stitched.flatten()},
-                           {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
-                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
-                           {"av_vel", tensors["perWorkerPartialSums"][1]}});
-                      graph.setInitialValue(cells_to_tmp["ny"], params->ny / 2);
-                      graph.setInitialValue(cells_to_tmp["nx"], params->nx);
-                      graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
-                      graph.setInitialValue(cells_to_tmp["omega"], params->omega);
-                      graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
-                      graph.setInitialValue(cells_to_tmp["density"], params->density);
-                      graph.setInitialValue(cells_to_tmp["accel"], params->accel);
-                      graph.setInitialValue(cells_to_tmp["isAccelerate"], do_i_own_lid);
-                      graph.setInitialValue(cells_to_tmp["rowToAccelerate"], which_of_my_rows_is_lid);
-                      graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
-                      graph.setCycleEstimate(cells_to_tmp, 4);
-                      graph.setTileMapping(cells_to_tmp, 501);
-                  }
-
-                  //// ------------------------------------ TMP2CELLS
-                  auto cs2 = graph.addComputeSet("tmp2cells");
-                  {
-                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(0, params->nx / 2));
-                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
-                      grids::Halos::debugHalos(halos);
-                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["tmp_cells"], *halos.topLeft),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.top),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.topRight),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.left),
-                                                         utils::applySlice(tensors["tmp_cells"], slice),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.right),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomLeft),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottom),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomRight));
-                      const bool do_i_own_lid = slice.rows().from() <= params->ny - 2 && slice.rows().to() >= params->ny - 2;
-                      const int which_of_my_rows_is_lid = do_i_own_lid ? params->ny - 2 - slice.rows().from() : -1;
-                      auto tmp_to_cells = graph.addVertex(
-                          cs2,
-                          "LbmTimeStepVertex",
-                          {{"cells_oldVec", stitched.flatten()},
-                           {"cells_newVec", utils::applySlice(tensors["cells"], slice).flatten()},
-                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
-                           {"av_vel", tensors["perWorkerPartialSums"][0]}});
-                      graph.setInitialValue(tmp_to_cells["ny"], params->ny);
-                      graph.setInitialValue(tmp_to_cells["nx"], params->nx / 2);
-                      graph.setInitialValue(tmp_to_cells["maxIters"], params->maxIters);
-                      graph.setInitialValue(tmp_to_cells["omega"], params->omega);
-                      graph.setInitialValue(tmp_to_cells["one_minus_omega"], 1.f - params->omega);
-                      graph.setInitialValue(tmp_to_cells["density"], params->density);
-                      graph.setInitialValue(tmp_to_cells["accel"], params->accel);
-                      graph.setInitialValue(tmp_to_cells["isAccelerate"], do_i_own_lid);
-                      graph.setInitialValue(tmp_to_cells["rowToAccelerate"], which_of_my_rows_is_lid);
-                      graph.setInitialValue(tmp_to_cells["total_free_cells"], numNonObstacleCells);
-                      graph.setCycleEstimate(tmp_to_cells, 4);
-                      graph.setTileMapping(tmp_to_cells, 1000);
-                  }
-                  {
-                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(params->nx / 2, params->nx));
-                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
-                      grids::Halos::debugHalos(halos);
-                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["tmp_cells"], *halos.topLeft),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.top),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.topRight),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.left),
-                                                         utils::applySlice(tensors["tmp_cells"], slice),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.right),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomLeft),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottom),
-                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomRight));
-                      const bool do_i_own_lid = slice.rows().from() <= params->ny - 2 && slice.rows().to() >= params->ny - 2;
-                      const int which_of_my_rows_is_lid = do_i_own_lid ? params->ny - 2 - slice.rows().from() : -1;
-
-                      auto tmp_to_cells = graph.addVertex(
-                          cs2,
-                          "LbmTimeStepVertex",
-                          {{"cells_oldVec", stitched.flatten()},
-                           {"cells_newVec", utils::applySlice(tensors["cells"], slice).flatten()},
-                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
-                           {"av_vel", tensors["perWorkerPartialSums"][1]}});
-                      graph.setInitialValue(tmp_to_cells["ny"], params->ny);
-                      graph.setInitialValue(tmp_to_cells["nx"], params->nx / 2);
-                      graph.setInitialValue(tmp_to_cells["maxIters"], params->maxIters);
-                      graph.setInitialValue(tmp_to_cells["omega"], params->omega);
-                      graph.setInitialValue(tmp_to_cells["one_minus_omega"], 1.f - params->omega);
-                      graph.setInitialValue(tmp_to_cells["density"], params->density);
-                      graph.setInitialValue(tmp_to_cells["accel"], params->accel);
-                      graph.setInitialValue(tmp_to_cells["isAccelerate"], do_i_own_lid);
-                      graph.setInitialValue(tmp_to_cells["rowToAccelerate"], which_of_my_rows_is_lid);
-                      graph.setInitialValue(tmp_to_cells["total_free_cells"], numNonObstacleCells);
-                      graph.setCycleEstimate(tmp_to_cells, 4);
-                      graph.setTileMapping(tmp_to_cells, 1001);
-                  }
-
                   // --------- BUILD UP  PROGRAM
                   auto prog = Sequence();
-                  auto avVelsNode = averageVelocity(graph, *params, tensors, workerGranularityMappings);
                   poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
                                                     "no stochastic rounding");
                   prog.add(accelerate_flow(graph, *params, tensors, numWorkersPerTile));
-                  prog.add(Repeat(params->maxIters / 2, Sequence(Execute(cs1), avVelsNode, Execute(cs2), avVelsNode)));
-
-                  //   Repeat(params->maxIters / 2, Sequence{
-                  //                          totalDensity(graph, *params, tensors),
-                  //                          PrintTensor("totalDensity (before): ", tensors["totalDensity"]),
-                  //                          PrintTensor("Obstacles: ", tensors["obstacles"]),
-                  //                          PrintTensor("Cells (before): ", tensors["cells"]),
-                  //   timestep(graph, *params, tensors, workerGranularityMappings,
-                  //            numWorkersPerTile),
-                  //                          PrintTensor("Cells: (after) ", tensors["cells"]),
-
-                  //                          totalDensity(graph, *params, tensors),
-                  //                          PrintTensor("totalDensity (after): ", tensors["totalDensity"])
+                  prog.add(
+                      Repeat(params->maxIters / 2,
+                             two_timesteps(graph, *params, tensors, workerGranularityMappings,
+                                           numWorkersPerTile, numNonObstacleCells)));
 
                   auto copyCellsAndObstaclesToDevice = Sequence();
                   popops::zero(graph, tensors["av_vel"], copyCellsAndObstaclesToDevice, "av_vels=0");
