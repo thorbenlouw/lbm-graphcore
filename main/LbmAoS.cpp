@@ -290,7 +290,7 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
 
     auto cells = tensors["cells"];
     auto obstacles = tensors["obstacles"];
-    //    assert(cells.dim(0) > 1);
+
     auto cellsSecondRowFromTop = cells.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
     auto obstaclesSecondRowFromTop = obstacles.slice(cells.dim(0) - 2, cells.dim(0) - 1, 0);
 
@@ -298,29 +298,22 @@ auto accelerate_flow(Graph &graph, const lbm::Params &params, TensorMap &tensors
                                                          params.nx);
 
     assert(ipuLevelMapping.has_value());
-    auto tileGranularityMappings = grids::newTilePartitions(
-        *ipuLevelMapping,
-        numTilesPerIpu);
-    auto workerGranularityMappings = grids::toWorkerPartitions(
-        tileGranularityMappings,
-        numWorkersPerTile);
+    auto tileGranularityMappings = grids::newTilePartitions(*ipuLevelMapping, numTilesPerIpu);
+    auto workerGranularityMappings = grids::toWorkerPartitions(tileGranularityMappings);
 
     for (const auto &[target, slice] : workerGranularityMappings)
     {
-
         auto tile = target.virtualTile(numTilesPerIpu);
-
         auto numCellsForThisWorker = slice.width() * slice.height();
-
         auto v = graph.addVertex(accelerateCs,
-                                 "AccelerateFlowVertex",
-                                 {{"cellsInSecondRow", applySlice(cellsSecondRowFromTop, slice).flatten()},
-                                  {"obstaclesInSecondRow", applySlice(obstaclesSecondRowFromTop,
-                                                                      slice)
-                                                               .flatten()}});
-        graph.setInitialValue(v["width"], numCellsForThisWorker);
-        graph.setInitialValue(v["w1"], params.density * params.accel / 9.0f);
-        graph.setInitialValue(v["w2"], params.density * params.accel / 36.0f);
+                                 "FirstAccelerateVertex",
+                                 {{"cellsVec", applySlice(cellsSecondRowFromTop, slice).flatten()},
+                                  {"obstaclesVec", applySlice(obstaclesSecondRowFromTop,
+                                                              slice)
+                                                       .flatten()}});
+        graph.setInitialValue(v["nx"], slice.width());
+        graph.setInitialValue(v["density"], params.density);
+        graph.setInitialValue(v["accel"], params.accel);
         graph.setCycleEstimate(v, numCellsForThisWorker);
         graph.setTileMapping(v, tile);
     }
@@ -471,36 +464,6 @@ auto main(int argc, char *argv[]) -> int
                       Copy(tensors["cells"], outStreamFinalCells),
                       Copy(tensors["av_vel"], outStreamAveVelocities));
 
-                  averageVelocity(graph, *params, tensors, workerGranularityMappings);
-                  // -------------------------- FIRST ACCELL
-                  auto firstAccelCs = graph.addComputeSet("firstAccel");
-
-                  auto firstAccelVertex = graph.addVertex(
-                      firstAccelCs,
-                      "FirstAccelVertex",
-                      {
-                          {"cellsVec", tensors["cells"][params->ny - 2].slice(0, params->nx / 2, 0).flatten()},
-                          {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
-                      });
-                  graph.setInitialValue(firstAccelVertex["nx"], params->nx / 2);
-                  graph.setInitialValue(firstAccelVertex["density"], params->density);
-                  graph.setInitialValue(firstAccelVertex["accel"], params->accel);
-                  graph.setCycleEstimate(firstAccelVertex, 4);
-                  graph.setTileMapping(firstAccelVertex, 31);
-
-                  firstAccelVertex = graph.addVertex(
-                      firstAccelCs,
-                      "FirstAccelVertex",
-                      {
-                          {"cellsVec", tensors["cells"][params->ny - 2].slice(params->nx / 2, params->nx).flatten()},
-                          {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
-                      });
-                  graph.setInitialValue(firstAccelVertex["nx"], params->nx - params->nx / 2);
-                  graph.setInitialValue(firstAccelVertex["density"], params->density);
-                  graph.setInitialValue(firstAccelVertex["accel"], params->accel);
-                  graph.setCycleEstimate(firstAccelVertex, 4);
-                  graph.setTileMapping(firstAccelVertex, 32);
-
                   // ------------ CELLS2TMP
                   auto cs1 = graph.addComputeSet("cells2tmp");
 
@@ -522,7 +485,7 @@ auto main(int argc, char *argv[]) -> int
                       const int which_of_my_rows_is_lid = do_i_own_lid ? params->ny - 2 - slice.rows().from() : -1;
                       auto cells_to_tmp = graph.addVertex(
                           cs1,
-                          "LastHopeVertex",
+                          "LbmTimeStepVertex",
                           {{"cells_oldVec", stitched.flatten()},
                            {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
                            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
@@ -559,7 +522,7 @@ auto main(int argc, char *argv[]) -> int
 
                       auto cells_to_tmp = graph.addVertex(
                           cs1,
-                          "LastHopeVertex",
+                          "LbmTimeStepVertex",
                           {{"cells_oldVec", stitched.flatten()},
                            {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
                            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
@@ -597,7 +560,7 @@ auto main(int argc, char *argv[]) -> int
                       const int which_of_my_rows_is_lid = do_i_own_lid ? params->ny - 2 - slice.rows().from() : -1;
                       auto tmp_to_cells = graph.addVertex(
                           cs2,
-                          "LastHopeVertex",
+                          "LbmTimeStepVertex",
                           {{"cells_oldVec", stitched.flatten()},
                            {"cells_newVec", utils::applySlice(tensors["cells"], slice).flatten()},
                            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
@@ -633,7 +596,7 @@ auto main(int argc, char *argv[]) -> int
 
                       auto tmp_to_cells = graph.addVertex(
                           cs2,
-                          "LastHopeVertex",
+                          "LbmTimeStepVertex",
                           {{"cells_oldVec", stitched.flatten()},
                            {"cells_newVec", utils::applySlice(tensors["cells"], slice).flatten()},
                            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
@@ -654,14 +617,12 @@ auto main(int argc, char *argv[]) -> int
 
                   // --------- BUILD UP  PROGRAM
                   auto prog = Sequence();
+                  auto avVelsNode = averageVelocity(graph, *params, tensors, workerGranularityMappings);
                   poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
                                                     "no stochastic rounding");
-                  auto avVelsNode = averageVelocity(graph, *params, tensors, workerGranularityMappings);
-
-                  prog.add(Execute(firstAccelCs));
+                  prog.add(accelerate_flow(graph, *params, tensors, numWorkersPerTile));
                   prog.add(Repeat(params->maxIters / 2, Sequence(Execute(cs1), avVelsNode, Execute(cs2), avVelsNode)));
 
-                  //   accelerate_flow(graph, *params, tensors, numWorkersPerTile),
                   //   Repeat(params->maxIters / 2, Sequence{
                   //                          totalDensity(graph, *params, tensors),
                   //                          PrintTensor("totalDensity (before): ", tensors["totalDensity"]),
