@@ -346,7 +346,6 @@ auto main(int argc, char *argv[]) -> int
                       Copy(tensors["cells"], outStreamFinalCells),
                       Copy(tensors["av_vel"], outStreamAveVelocities));
 
-                  // --------- BUILD UP  PROGRAM
                   auto prog = Sequence();
                   poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
                                                     "no stochastic rounding");
@@ -397,7 +396,6 @@ auto main(int argc, char *argv[]) -> int
     double total_compute_time = 0.0;
     auto cells = lbm::Cells(params->nx, params->ny);
     cells.initialise(*params);
-    std::cout << "HOST total density: " << cells.totalDensity() << std::endl;
 
     auto av_vels = std::vector<float>(params->maxIters, 0.0f);
 
@@ -425,42 +423,7 @@ auto main(int argc, char *argv[]) -> int
         engine.run(2);
     });
 
-    //    for (auto jj = 0u; jj < params->ny; jj++) {
-    //        for (auto ii = 0u; ii < params->nx; ii++) {
-    //            for (auto kk = 0u; kk < 9; kk++) {
-    //                printf("%.9f ", cells.data[9 * (ii + jj * params->nx) + kk]);
-    //            }
-    //            printf("\n");
-    //        }
-    //        printf("\n");
-    //    }
-
-    int numErrs = 0;
-    for (auto jj = 0u; jj < params->ny; jj++)
-    {
-        for (auto ii = 0u; ii < params->nx; ii++)
-        {
-            for (auto k = 0u; k < 9; k++)
-            {
-                if (std::isnan(cells.data[9 * (ii + jj * params->nx) + k]))
-                {
-                    if (numErrs < 100)
-                    {
-                        printf("%d %d %d is %.12E\n", jj, ii, k, cells.data[9 * (ii + jj * params->nx) + k]);
-                    }
-                    numErrs++;
-                }
-            }
-        }
-    }
-    printf("%d Errors\n", numErrs);
-
     utils::timedStep("Writing output files ", [&]() {
-        // for (auto i = 0u; i < av_vels.size(); i++)
-        // {
-        //     //            std::cout << av_vels[i] << std::endl;
-        //     av_vels[i] = av_vels[i] / numNonObstacleCells;
-        // }
         lbm::writeAverageVelocities("av_vels.dat", av_vels);
         lbm::writeResults("final_state.dat", *params, *obstacles, cells);
     });
