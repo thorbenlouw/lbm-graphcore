@@ -162,24 +162,18 @@ auto lbmKernel(const Params &params, const Cell *cells_old, Cell *cells_new, con
                 const float u_s = u_x + u_y;
                 const float u_d = -u_x + u_y;
 
-                const float speeds_out_0 = speeds_0 * params.one_minus_omega + ld0 * c_sq;
-                const float speeds_out_1 =
-                    speeds_1 * params.one_minus_omega + ld1 * ((4.50f * u_x) * (2.00f / 3.00f + u_x) + c_sq);
-                const float speeds_out_2 =
-                    speeds_2 * params.one_minus_omega + ld1 * ((4.50f * u_y) * (2.00f / 3.00f + u_y) + c_sq);
-                const float speeds_out_3 =
-                    speeds_3 * params.one_minus_omega + ld1 * ((-4.50f * u_x) * (2.00f / 3.00f - u_x) + c_sq);
-                const float speeds_out_4 =
-                    speeds_4 * params.one_minus_omega + ld1 * ((-4.50f * u_y) * (2.00f / 3.00f - u_y) + c_sq);
-                const float speeds_out_5 =
-                    speeds_5 * params.one_minus_omega + ld2 * ((4.50f * u_s) * (2.00f / 3.00f + u_s) + c_sq);
-                const float speeds_out_6 =
-                    speeds_6 * params.one_minus_omega + ld2 * ((4.50f * u_d) * (2.00f / 3.00f + u_d) + c_sq);
-                const float speeds_out_7 =
-                    speeds_7 * params.one_minus_omega + ld2 * ((-4.50f * u_s) * (2.00f / 3.00f - u_s) + c_sq);
-                const float speeds_out_8 =
-                    speeds_8 * params.one_minus_omega + ld2 * ((-4.50f * u_d) * (2.00f / 3.00f - u_d) + c_sq);
+                const auto relax2 = [&](const float2 speed, const float weight, const float2 velocityComponent) -> float2 {
+                    return speed * params.one_minus_omega +
+                           weight * ((4.50f * velocityComponent) * (2.00f / 3.00f + velocityComponent) + c_sq);
+                };
 
+                auto [speeds_out_3, speeds_out_1] = relax2(float2{speeds_3, speeds_1}, ld1, float2{-u_x, u_x});
+                auto [speeds_out_4, speeds_out_2] = relax2(float2{speeds_4, speeds_2}, ld1, float2{-u_y, u_y});
+                auto [speeds_out_6, speeds_out_5] = relax2(float2{speeds_6, speeds_5}, ld2, float2{-u_x + u_y, u_x + u_y});
+                auto [speeds_out_7, speeds_out_8] = relax2(float2{speeds_7, speeds_8}, ld2, float2{-u_x - u_y, u_x - u_y});
+
+                const float speeds_out_0 = speeds_0 * params.one_minus_omega + ld0 * c_sq;
+                
                 cells_new[NEW_OFFSET(0, 0)].speeds[0] = speeds_out_0;
                 cells_new[NEW_OFFSET(0, 0)].speeds[1] = speeds_out_1 + accel * w1;
                 cells_new[NEW_OFFSET(0, 0)].speeds[2] = speeds_out_2;
