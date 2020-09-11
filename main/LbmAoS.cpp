@@ -506,7 +506,7 @@ auto main(int argc, char *argv[]) -> int
 
                   auto size = grids::Size2D(params->ny, params->nx);
                   {
-                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(0, params->nx));
+                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(0, params->nx/2));
                       auto halos = grids::Halos::forSliceWithWraparound(slice, size);
                       grids::Halos::debugHalos(halos);
                       auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
@@ -526,7 +526,7 @@ auto main(int argc, char *argv[]) -> int
                            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
                            {"av_vel", tensors["perWorkerPartialSums"][0]}});
                       graph.setInitialValue(cells_to_tmp["ny"], params->ny);
-                      graph.setInitialValue(cells_to_tmp["nx"], params->nx);
+                      graph.setInitialValue(cells_to_tmp["nx"], params->nx/2);
                       graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
                       graph.setInitialValue(cells_to_tmp["omega"], params->omega);
                       graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
@@ -537,42 +537,42 @@ auto main(int argc, char *argv[]) -> int
                       graph.setTileMapping(cells_to_tmp, 500);
                   }
 
-                //   {
-                //       auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(params->nx / 2, params->nx));
-                //       auto halos = grids::Halos::forSliceWithWraparound(slice, size);
-                //       grids::Halos::debugHalos(halos);
-                //       auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
-                //                                          utils::applySlice(tensors["cells"], *halos.top),
-                //                                          utils::applySlice(tensors["cells"], *halos.topRight),
-                //                                          utils::applySlice(tensors["cells"], *halos.left),
-                //                                          utils::applySlice(tensors["cells"], slice),
-                //                                          utils::applySlice(tensors["cells"], *halos.right),
-                //                                          utils::applySlice(tensors["cells"], *halos.bottomLeft),
-                //                                          utils::applySlice(tensors["cells"], *halos.bottom),
-                //                                          utils::applySlice(tensors["cells"], *halos.bottomRight));
-                //       auto cells_to_tmp = graph.addVertex(
-                //           cs1,
-                //           "LastHopeVertex",
-                //           {{"cells_oldVec", stitched.flatten()},
-                //            {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
-                //            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
-                //            {"av_vel", tensors["perWorkerPartialSums"][1]}});
-                //       graph.setInitialValue(cells_to_tmp["ny"], params->ny);
-                //       graph.setInitialValue(cells_to_tmp["nx"], params->nx/2);
-                //       graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
-                //       graph.setInitialValue(cells_to_tmp["omega"], params->omega);
-                //       graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
-                //       graph.setInitialValue(cells_to_tmp["density"], params->density);
-                //       graph.setInitialValue(cells_to_tmp["accel"], params->accel);
-                //       graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
-                //       graph.setCycleEstimate(cells_to_tmp, 4);
-                //       graph.setTileMapping(cells_to_tmp, 61);
-                //   }
+                  {
+                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(params->nx / 2, params->nx));
+                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
+                      grids::Halos::debugHalos(halos);
+                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
+                                                         utils::applySlice(tensors["cells"], *halos.top),
+                                                         utils::applySlice(tensors["cells"], *halos.topRight),
+                                                         utils::applySlice(tensors["cells"], *halos.left),
+                                                         utils::applySlice(tensors["cells"], slice),
+                                                         utils::applySlice(tensors["cells"], *halos.right),
+                                                         utils::applySlice(tensors["cells"], *halos.bottomLeft),
+                                                         utils::applySlice(tensors["cells"], *halos.bottom),
+                                                         utils::applySlice(tensors["cells"], *halos.bottomRight));
+                      auto cells_to_tmp = graph.addVertex(
+                          cs1,
+                          "LastHopeVertex",
+                          {{"cells_oldVec", stitched.flatten()},
+                           {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
+                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
+                           {"av_vel", tensors["perWorkerPartialSums"][1]}});
+                      graph.setInitialValue(cells_to_tmp["ny"], params->ny);
+                      graph.setInitialValue(cells_to_tmp["nx"], params->nx/2);
+                      graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
+                      graph.setInitialValue(cells_to_tmp["omega"], params->omega);
+                      graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
+                      graph.setInitialValue(cells_to_tmp["density"], params->density);
+                      graph.setInitialValue(cells_to_tmp["accel"], params->accel);
+                      graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
+                      graph.setCycleEstimate(cells_to_tmp, 4);
+                      graph.setTileMapping(cells_to_tmp, 501);
+                  }
 
                   //// ------------------------------------ TMP2CELLS
                   auto cs2 = graph.addComputeSet("tmp2cells");
                   {
-                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(0, params->nx));
+                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(0, params->nx/2));
                       auto halos = grids::Halos::forSliceWithWraparound(slice, size);
                       grids::Halos::debugHalos(halos);
                       auto stitched = utils::stitchHalos(utils::applySlice(tensors["tmp_cells"], *halos.topLeft),
@@ -592,7 +592,7 @@ auto main(int argc, char *argv[]) -> int
                            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
                            {"av_vel", tensors["perWorkerPartialSums"][0]}});
                       graph.setInitialValue(tmp_to_cells["ny"], params->ny);
-                      graph.setInitialValue(tmp_to_cells["nx"], params->nx);
+                      graph.setInitialValue(tmp_to_cells["nx"], params->nx/2);
                       graph.setInitialValue(tmp_to_cells["maxIters"], params->maxIters);
                       graph.setInitialValue(tmp_to_cells["omega"], params->omega);
                       graph.setInitialValue(tmp_to_cells["one_minus_omega"], 1.f - params->omega);
@@ -601,6 +601,37 @@ auto main(int argc, char *argv[]) -> int
                       graph.setInitialValue(tmp_to_cells["total_free_cells"], numNonObstacleCells);
                       graph.setCycleEstimate(tmp_to_cells, 4);
                       graph.setTileMapping(tmp_to_cells, 1000);
+                  }
+                    {
+                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(params->nx/2, params->nx));
+                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
+                      grids::Halos::debugHalos(halos);
+                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["tmp_cells"], *halos.topLeft),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.top),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.topRight),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.left),
+                                                         utils::applySlice(tensors["tmp_cells"], slice),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.right),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomLeft),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottom),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomRight));
+                      auto tmp_to_cells = graph.addVertex(
+                          cs2,
+                          "LastHopeVertex",
+                          {{"cells_oldVec", stitched.flatten()},
+                           {"cells_newVec", utils::applySlice(tensors["cells"], slice).flatten()},
+                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
+                           {"av_vel", tensors["perWorkerPartialSums"][1]}});
+                      graph.setInitialValue(tmp_to_cells["ny"], params->ny);
+                      graph.setInitialValue(tmp_to_cells["nx"], params->nx/2);
+                      graph.setInitialValue(tmp_to_cells["maxIters"], params->maxIters);
+                      graph.setInitialValue(tmp_to_cells["omega"], params->omega);
+                      graph.setInitialValue(tmp_to_cells["one_minus_omega"], 1.f - params->omega);
+                      graph.setInitialValue(tmp_to_cells["density"], params->density);
+                      graph.setInitialValue(tmp_to_cells["accel"], params->accel);
+                      graph.setInitialValue(tmp_to_cells["total_free_cells"], numNonObstacleCells);
+                      graph.setCycleEstimate(tmp_to_cells, 4);
+                      graph.setTileMapping(tmp_to_cells, 1001);
                   }
 
                   // --------- BUILD UP  PROGRAM
