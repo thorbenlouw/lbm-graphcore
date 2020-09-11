@@ -573,47 +573,68 @@ void firstAccel(const Params &params, const bool *obstacles, Cell *cells) {
         }
     }
 }
-
 auto nuevo(const Params &params, const Cell *cells_old, Cell *cells_new, const bool *obstacles)  -> float{
     /* compute weighting factors */
     const float w1 = params.density * params.accel / 9.f;
     const float w2 = params.density * params.accel / 36.f;
     float tot_u = 0.00f;
-    for (int jj = 0; jj < params.ny; jj++) {
-        for (int ii = 0; ii < params.nx; ii++) {
+
+    // Old is ny rows x nx cols
+#define NEW_OFFSET(r, c) (ii  + c) + (jj  + r) * params.nx
+#define OLD_OFFSET(r, c) (ii +1 + c) + (jj  + 1 + r) * (params.nx + 2)
+    for (int jj = 0; jj < params.ny; jj++)
+    {
+        for (int ii = 0; ii < params.nx; ii++)
+        {
             const int y_n = (jj + 1) % params.ny;
             const int y_s = (jj == 0) ? (jj + params.ny - 1) : (jj - 1);
             const float accel = (jj == params.ny - 2) ? 1.00f : 0.00f;
             const int x_e = (ii + 1) % params.nx;
             const int x_w = (ii == 0) ? (ii + params.nx - 1) : (ii - 1);
-            const int is_obstacle = obstacles[ii + jj * params.nx];
+            const int is_obstacle = obstacles[NEW_OFFSET(0, 0)];
 
-            const float speeds_0 = cells_old[ii + jj * params.nx].speeds[0]; /* central cell, no movement */
-            const float speeds_1 = cells_old[x_w + jj * params.nx].speeds[1]; /* east */
-            const float speeds_2 = cells_old[ii + y_s * params.nx].speeds[2]; /* north */
-            const float speeds_3 = cells_old[x_e + jj * params.nx].speeds[3]; /* west */
-            const float speeds_4 = cells_old[ii + y_n * params.nx].speeds[4]; /* south */
-            const float speeds_5 = cells_old[x_w + y_s * params.nx].speeds[5]; /* north-east */
-            const float speeds_6 = cells_old[x_e + y_s * params.nx].speeds[6]; /* north-west */
-            const float speeds_7 = cells_old[x_e + y_n * params.nx].speeds[7]; /* south-west */
-            const float speeds_8 = cells_old[x_w + y_n * params.nx].speeds[8]; /* south-east */
 
-            if (is_obstacle) {
-                cells_new[ii + jj * params.nx].speeds[0] = speeds_0;
-                cells_new[ii + jj * params.nx].speeds[1] = speeds_3;
-                cells_new[ii + jj * params.nx].speeds[2] = speeds_4;
-                cells_new[ii + jj * params.nx].speeds[3] = speeds_1;
-                cells_new[ii + jj * params.nx].speeds[4] = speeds_2;
-                cells_new[ii + jj * params.nx].speeds[5] = speeds_7;
-                cells_new[ii + jj * params.nx].speeds[6] = speeds_8;
-                cells_new[ii + jj * params.nx].speeds[7] = speeds_5;
-                cells_new[ii + jj * params.nx].speeds[8] = speeds_6;
-            } else {
+            const float speeds_0 = cells_old[OLD_OFFSET(+0, +0)].speeds[0]; /* central cell, no movement */
+            const float speeds_1 = cells_old[OLD_OFFSET(+0, -1)].speeds[1]; /* east */
+            const float speeds_2 = cells_old[OLD_OFFSET(-1, +0)].speeds[2]; /* north */
+            const float speeds_3 = cells_old[OLD_OFFSET(+0, +1)].speeds[3]; /* west */
+            const float speeds_4 = cells_old[OLD_OFFSET(+1, +0)].speeds[4]; /* south */
+            const float speeds_5 = cells_old[OLD_OFFSET(-1, -1)].speeds[5]; /* north-east */
+            const float speeds_6 = cells_old[OLD_OFFSET(-1, +1)].speeds[6]; /* north-west */
+            const float speeds_7 = cells_old[OLD_OFFSET(+1, +1)].speeds[7]; /* south-west */
+            const float speeds_8 = cells_old[OLD_OFFSET(+1, -1)].speeds[8]; /* south-east */
+
+            // const float speeds_0 = cells_old[ii + jj * params.nx].speeds[0]; /* central cell, no movement */
+            // const float speeds_1 = cells_old[x_w + jj * params.nx].speeds[1]; /* east */
+            // const float speeds_2 = cells_old[ii + y_s * params.nx].speeds[2]; /* north */
+            // const float speeds_3 = cells_old[x_e + jj * params.nx].speeds[3]; /* west */
+            // const float speeds_4 = cells_old[ii + y_n * params.nx].speeds[4]; /* south */
+            // const float speeds_5 = cells_old[x_w + y_s * params.nx].speeds[5]; /* north-east */
+            // const float speeds_6 = cells_old[x_e + y_s * params.nx].speeds[6]; /* north-west */
+            // const float speeds_7 = cells_old[x_e + y_n * params.nx].speeds[7]; /* south-west */
+            // const float speeds_8 = cells_old[x_w + y_n * params.nx].speeds[8]; /* south-east */
+
+            if (is_obstacle)
+            {
+                cells_new[NEW_OFFSET(0,0)].speeds[0] = speeds_0;
+                cells_new[NEW_OFFSET(0,0)].speeds[1] = speeds_3;
+                cells_new[NEW_OFFSET(0,0)].speeds[2] = speeds_4;
+                cells_new[NEW_OFFSET(0,0)].speeds[3] = speeds_1;
+                cells_new[NEW_OFFSET(0,0)].speeds[4] = speeds_2;
+                cells_new[NEW_OFFSET(0,0)].speeds[5] = speeds_7;
+                cells_new[NEW_OFFSET(0,0)].speeds[6] = speeds_8;
+                cells_new[NEW_OFFSET(0,0)].speeds[7] = speeds_5;
+                cells_new[NEW_OFFSET(0,0)].speeds[8] = speeds_6;
+
+                
+            }
+            else {
 
                 /* compute local density total */
                 const float local_density =
-                        speeds_0 + speeds_1 + speeds_2 + speeds_3 + speeds_4 + speeds_5 + speeds_6 + speeds_7 +
-                        speeds_8;
+                    speeds_0 + speeds_1 + speeds_2 + speeds_3 + speeds_4 + speeds_5 + speeds_6 + speeds_7 +
+                    speeds_8;
+
                 /* compute x velocity component */
                 const float u_x = (speeds_1 + speeds_5 + speeds_8 - (speeds_3 + speeds_6 + speeds_7)) / local_density;
                 /* compute y velocity component */
@@ -631,63 +652,62 @@ auto nuevo(const Params &params, const Cell *cells_old, Cell *cells_new, const b
 
                 const float speeds_out_0 = speeds_0 * params.one_minus_omega + ld0 * c_sq;
                 const float speeds_out_1 =
-                        speeds_1 * params.one_minus_omega + ld1 * ((4.50f * u_x) * (2.00f / 3.00f + u_x) + c_sq);
+                    speeds_1 * params.one_minus_omega + ld1 * ((4.50f * u_x) * (2.00f / 3.00f + u_x) + c_sq);
                 const float speeds_out_2 =
-                        speeds_2 * params.one_minus_omega + ld1 * ((4.50f * u_y) * (2.00f / 3.00f + u_y) + c_sq);
+                    speeds_2 * params.one_minus_omega + ld1 * ((4.50f * u_y) * (2.00f / 3.00f + u_y) + c_sq);
                 const float speeds_out_3 =
-                        speeds_3 * params.one_minus_omega + ld1 * ((-4.50f * u_x) * (2.00f / 3.00f - u_x) + c_sq);
+                    speeds_3 * params.one_minus_omega + ld1 * ((-4.50f * u_x) * (2.00f / 3.00f - u_x) + c_sq);
                 const float speeds_out_4 =
-                        speeds_4 * params.one_minus_omega + ld1 * ((-4.50f * u_y) * (2.00f / 3.00f - u_y) + c_sq);
+                    speeds_4 * params.one_minus_omega + ld1 * ((-4.50f * u_y) * (2.00f / 3.00f - u_y) + c_sq);
                 const float speeds_out_5 =
-                        speeds_5 * params.one_minus_omega + ld2 * ((4.50f * u_s) * (2.00f / 3.00f + u_s) + c_sq);
+                    speeds_5 * params.one_minus_omega + ld2 * ((4.50f * u_s) * (2.00f / 3.00f + u_s) + c_sq);
                 const float speeds_out_6 =
-                        speeds_6 * params.one_minus_omega + ld2 * ((4.50f * u_d) * (2.00f / 3.00f + u_d) + c_sq);
+                    speeds_6 * params.one_minus_omega + ld2 * ((4.50f * u_d) * (2.00f / 3.00f + u_d) + c_sq);
                 const float speeds_out_7 =
-                        speeds_7 * params.one_minus_omega + ld2 * ((-4.50f * u_s) * (2.00f / 3.00f - u_s) + c_sq);
+                    speeds_7 * params.one_minus_omega + ld2 * ((-4.50f * u_s) * (2.00f / 3.00f - u_s) + c_sq);
                 const float speeds_out_8 =
-                        speeds_8 * params.one_minus_omega + ld2 * ((-4.50f * u_d) * (2.00f / 3.00f - u_d) + c_sq);
+                    speeds_8 * params.one_minus_omega + ld2 * ((-4.50f * u_d) * (2.00f / 3.00f - u_d) + c_sq);
 
-                cells_new[ii + jj * params.nx].speeds[0] = speeds_out_0;
-                cells_new[ii + jj * params.nx].speeds[1] = speeds_out_1 + accel * w1;
-                cells_new[ii + jj * params.nx].speeds[2] = speeds_out_2;
-                cells_new[ii + jj * params.nx].speeds[3] = speeds_out_3 - accel * w1;
-                cells_new[ii + jj * params.nx].speeds[4] = speeds_out_4;
-                cells_new[ii + jj * params.nx].speeds[5] = speeds_out_5 + accel * w2;
-                cells_new[ii + jj * params.nx].speeds[6] = speeds_out_6 - accel * w2;
-                cells_new[ii + jj * params.nx].speeds[7] = speeds_out_7 - accel * w2;
-                cells_new[ii + jj * params.nx].speeds[8] = speeds_out_8 + accel * w2;
+                cells_new[NEW_OFFSET(0,0)].speeds[0] = speeds_out_0;
+                cells_new[NEW_OFFSET(0,0)].speeds[1] = speeds_out_1 + accel * w1;
+                cells_new[NEW_OFFSET(0,0)].speeds[2] = speeds_out_2;
+                cells_new[NEW_OFFSET(0,0)].speeds[3] = speeds_out_3 - accel * w1;
+                cells_new[NEW_OFFSET(0,0)].speeds[4] = speeds_out_4;
+                cells_new[NEW_OFFSET(0,0)].speeds[5] = speeds_out_5 + accel * w2;
+                cells_new[NEW_OFFSET(0,0)].speeds[6] = speeds_out_6 - accel * w2;
+                cells_new[NEW_OFFSET(0,0)].speeds[7] = speeds_out_7 - accel * w2;
+                cells_new[NEW_OFFSET(0,0)].speeds[8] = speeds_out_8 + accel * w2;
                 tot_u += sqrtf(u_sq);
             }
         }
     }
     return tot_u / (float)params.total_free_cells;
-
 }
 
-
-class FirstAccelVertex : public Vertex {
+class FirstAccelVertex : public Vertex
+{
 
 public:
-    InOut <Vector<float, VectorLayout::ONE_PTR>> cellsVec;
-    Input <Vector<bool, VectorLayout::ONE_PTR>> obstaclesVec;
+    InOut<Vector<float, VectorLayout::ONE_PTR>> cellsVec;
+    Input<Vector<bool, VectorLayout::ONE_PTR>> obstaclesVec;
     int nx;
     float density;
     float accel;
 
-    bool compute() {
+    bool compute()
+    {
         auto cells = reinterpret_cast<Cell *>(&cellsVec[0]);
         auto obstacles = reinterpret_cast<bool *>(&obstaclesVec[0]);
 
-        auto params = Params {
+        auto params = Params{
             .ny = 0,
             .nx = nx,
-          .maxIters = 0,
+            .maxIters = 0,
             .omega = 0,
             .one_minus_omega = 0,
             .density = density,
             .accel = accel,
-            .total_free_cells = 0
-        };
+            .total_free_cells = 0};
 
         firstAccel(params, obstacles, cells);
 
@@ -695,13 +715,14 @@ public:
     }
 };
 
-class LastHopeVertex : public Vertex {
+class LastHopeVertex : public Vertex
+{
 
 public:
-    Input <Vector<float, VectorLayout::ONE_PTR>> cells_oldVec;
-    Output <Vector<float, VectorLayout::ONE_PTR>> cells_newVec;
-    Input <Vector<bool, VectorLayout::ONE_PTR>> obstaclesVec;
-    Output <float> av_vel;
+    Input<Vector<float, VectorLayout::ONE_PTR>> cells_oldVec;
+    Output<Vector<float, VectorLayout::ONE_PTR>> cells_newVec;
+    Input<Vector<bool, VectorLayout::ONE_PTR>> obstaclesVec;
+    Output<float> av_vel;
     int ny;
     int nx;
     int maxIters;
@@ -730,8 +751,6 @@ public:
 
         *av_vel = nuevo(params, cells_old, cells_new, obstacles);
     
-    
-
         return true;
     }
 };

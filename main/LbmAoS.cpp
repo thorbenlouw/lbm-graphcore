@@ -430,144 +430,200 @@ auto main(int argc, char *argv[]) -> int
 
     timedStep("Building computational graph",
               [&]() {
-        popops::addCodelets(graph);
+                  popops::addCodelets(graph);
 
-        graph.addCodelets("codelets/D2Q9Codelets.cpp", CodeletFileType::Auto, debug ? "" : "-O3");
+                  graph.addCodelets("codelets/D2Q9Codelets.cpp", CodeletFileType::Auto, debug ? "-d" : "-O3");
 
-        tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
-                                              "av_vel");
-        tensors["cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
-                                             "cells");
-        tensors["tmp_cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
-                                                 "tmp_cells");
-        tensors["obstacles"] = graph.addVariable(BOOL, {params->ny, params->nx}, "obstacles");
-        tensors["perWorkerPartialSums"] = graph.addVariable(FLOAT,
-                                                            {numWorkersPerTile * numTilesPerIpu * numIpus},
-                                                            poplar::VariableMappingMethod::LINEAR,
-                                                            "perWorkerPartialSums");
+                  tensors["av_vel"] = graph.addVariable(FLOAT, {params->maxIters, 1},
+                                                        "av_vel");
+                  tensors["cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
+                                                       "cells");
+                  tensors["tmp_cells"] = graph.addVariable(FLOAT, {params->ny, params->nx, lbm::NumSpeeds},
+                                                           "tmp_cells");
+                  tensors["obstacles"] = graph.addVariable(BOOL, {params->ny, params->nx}, "obstacles");
+                  tensors["perWorkerPartialSums"] = graph.addVariable(FLOAT,
+                                                                      {numWorkersPerTile * numTilesPerIpu * numIpus},
+                                                                      poplar::VariableMappingMethod::LINEAR,
+                                                                      "perWorkerPartialSums");
 
-        tensors["reducedSum"] = graph.addVariable(FLOAT, {}, "reducedSum");
-        graph.setInitialValue(tensors["reducedSum"], 0.f);
-        graph.setTileMapping(tensors["reducedSum"], 0);
+                  tensors["reducedSum"] = graph.addVariable(FLOAT, {}, "reducedSum");
+                  graph.setInitialValue(tensors["reducedSum"], 0.f);
+                  graph.setTileMapping(tensors["reducedSum"], 0);
 
-        mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
-        mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
-        mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
+                  mapCellsToTiles(graph, tensors["cells"], tileGranularityMappings);
+                  mapCellsToTiles(graph, tensors["tmp_cells"], tileGranularityMappings);
+                  mapCellsToTiles(graph, tensors["obstacles"], tileGranularityMappings);
 
-        tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
-        graph.setTileMapping(tensors["counter"], numTilesPerIpu - 1);
-        graph.setInitialValue(tensors["counter"], 0);
+                  tensors["counter"] = graph.addVariable(UNSIGNED_INT, {}, "counter");
+                  graph.setTileMapping(tensors["counter"], numTilesPerIpu - 1);
+                  graph.setInitialValue(tensors["counter"], 0);
 
-        auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
-        auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
-                                                             lbm::NumSpeeds * params->nx *
-                                                                 params->ny);
-        auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
-                                                       lbm::NumSpeeds * params->nx * params->ny);
-        auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL,
-                                                           params->nx * params->ny);
+                  auto outStreamAveVelocities = graph.addDeviceToHostFIFO("<<av_vel", FLOAT, params->maxIters);
+                  auto outStreamFinalCells = graph.addDeviceToHostFIFO("<<cells", FLOAT,
+                                                                       lbm::NumSpeeds * params->nx *
+                                                                           params->ny);
+                  auto inStreamCells = graph.addHostToDeviceFIFO(">>cells", FLOAT,
+                                                                 lbm::NumSpeeds * params->nx * params->ny);
+                  auto inStreamObstacles = graph.addHostToDeviceFIFO(">>obstacles", BOOL,
+                                                                     params->nx * params->ny);
 
-        auto streamBackToHostProg = Sequence(
-            Copy(tensors["cells"], outStreamFinalCells),
-            Copy(tensors["av_vel"], outStreamAveVelocities));
+                  auto streamBackToHostProg = Sequence(
+                      Copy(tensors["cells"], outStreamFinalCells),
+                      Copy(tensors["av_vel"], outStreamAveVelocities));
 
-        averageVelocity(graph, *params, tensors, workerGranularityMappings);
-        auto firstAccelCs = graph.addComputeSet("firstAccel");
+                  averageVelocity(graph, *params, tensors, workerGranularityMappings);
+                  // -------------------------- FIRST ACCELL
+                  auto firstAccelCs = graph.addComputeSet("firstAccel");
 
-        auto firstAccelVertex = graph.addVertex(
-            firstAccelCs,
-            "FirstAccelVertex",
-            {
-                {"cellsVec", tensors["cells"][params->ny - 2].slice(0, params->nx/2, 0).flatten()},
-                {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
-            });
-        graph.setInitialValue(firstAccelVertex["nx"], params->nx/2);
-        graph.setInitialValue(firstAccelVertex["density"], params->density);
-        graph.setInitialValue(firstAccelVertex["accel"], params->accel);
-        graph.setCycleEstimate(firstAccelVertex, 4);
-        graph.setTileMapping(firstAccelVertex, 31);
+                  auto firstAccelVertex = graph.addVertex(
+                      firstAccelCs,
+                      "FirstAccelVertex",
+                      {
+                          {"cellsVec", tensors["cells"][params->ny - 2].slice(0, params->nx / 2, 0).flatten()},
+                          {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
+                      });
+                  graph.setInitialValue(firstAccelVertex["nx"], params->nx / 2);
+                  graph.setInitialValue(firstAccelVertex["density"], params->density);
+                  graph.setInitialValue(firstAccelVertex["accel"], params->accel);
+                  graph.setCycleEstimate(firstAccelVertex, 4);
+                  graph.setTileMapping(firstAccelVertex, 31);
 
-        firstAccelVertex = graph.addVertex(
-            firstAccelCs,
-            "FirstAccelVertex",
-            {
-                {"cellsVec", tensors["cells"][params->ny - 2].slice(params->nx/2, params->nx).flatten()},
-                {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
-            });
-        graph.setInitialValue(firstAccelVertex["nx"], params->nx-params->nx/2);
-        graph.setInitialValue(firstAccelVertex["density"], params->density);
-        graph.setInitialValue(firstAccelVertex["accel"], params->accel);
-        graph.setCycleEstimate(firstAccelVertex, 4);
-        graph.setTileMapping(firstAccelVertex, 32);
+                  firstAccelVertex = graph.addVertex(
+                      firstAccelCs,
+                      "FirstAccelVertex",
+                      {
+                          {"cellsVec", tensors["cells"][params->ny - 2].slice(params->nx / 2, params->nx).flatten()},
+                          {"obstaclesVec", tensors["obstacles"][params->ny - 2].flatten()},
+                      });
+                  graph.setInitialValue(firstAccelVertex["nx"], params->nx - params->nx / 2);
+                  graph.setInitialValue(firstAccelVertex["density"], params->density);
+                  graph.setInitialValue(firstAccelVertex["accel"], params->accel);
+                  graph.setCycleEstimate(firstAccelVertex, 4);
+                  graph.setTileMapping(firstAccelVertex, 32);
 
-        auto cs1 = graph.addComputeSet("cells2tmp");
+                  // ------------ CELLS2 TMP
+                  auto cs1 = graph.addComputeSet("cells2tmp");
 
-        auto cells_to_tmp = graph.addVertex(
-            cs1,
-            "LastHopeVertex",
-            {
-                {"cells_oldVec", tensors["cells"].flatten()},
-                {"cells_newVec", tensors["tmp_cells"].flatten()},
-                {"obstaclesVec", tensors["obstacles"].flatten()},
-                {"av_vel", tensors["perWorkerPartialSums"][0]}
-            });
-        graph.setInitialValue(cells_to_tmp["ny"], params->ny);
-        graph.setInitialValue(cells_to_tmp["nx"], params->nx);
-        graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
-        graph.setInitialValue(cells_to_tmp["omega"], params->omega);
-        graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
-        graph.setInitialValue(cells_to_tmp["density"], params->density);
-        graph.setInitialValue(cells_to_tmp["accel"], params->accel);
-        graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
-        graph.setCycleEstimate(cells_to_tmp, 4);
-        graph.setTileMapping(cells_to_tmp, 0);
+                  auto size = grids::Size2D(params->ny, params->nx);
+                  {
+                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(0, params->nx));
+                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
+                      grids::Halos::debugHalos(halos);
+                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
+                                                         utils::applySlice(tensors["cells"], *halos.top),
+                                                         utils::applySlice(tensors["cells"], *halos.topRight),
+                                                         utils::applySlice(tensors["cells"], *halos.left),
+                                                         utils::applySlice(tensors["cells"], slice),
+                                                         utils::applySlice(tensors["cells"], *halos.right),
+                                                         utils::applySlice(tensors["cells"], *halos.bottomLeft),
+                                                         utils::applySlice(tensors["cells"], *halos.bottom),
+                                                         utils::applySlice(tensors["cells"], *halos.bottomRight));
+                      auto cells_to_tmp = graph.addVertex(
+                          cs1,
+                          "LastHopeVertex",
+                          {{"cells_oldVec", stitched.flatten()},
+                           {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
+                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
+                           {"av_vel", tensors["perWorkerPartialSums"][0]}});
+                      graph.setInitialValue(cells_to_tmp["ny"], params->ny);
+                      graph.setInitialValue(cells_to_tmp["nx"], params->nx);
+                      graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
+                      graph.setInitialValue(cells_to_tmp["omega"], params->omega);
+                      graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
+                      graph.setInitialValue(cells_to_tmp["density"], params->density);
+                      graph.setInitialValue(cells_to_tmp["accel"], params->accel);
+                      graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
+                      graph.setCycleEstimate(cells_to_tmp, 4);
+                      graph.setTileMapping(cells_to_tmp, 500);
+                  }
 
+                //   {
+                //       auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(params->nx / 2, params->nx));
+                //       auto halos = grids::Halos::forSliceWithWraparound(slice, size);
+                //       grids::Halos::debugHalos(halos);
+                //       auto stitched = utils::stitchHalos(utils::applySlice(tensors["cells"], *halos.topLeft),
+                //                                          utils::applySlice(tensors["cells"], *halos.top),
+                //                                          utils::applySlice(tensors["cells"], *halos.topRight),
+                //                                          utils::applySlice(tensors["cells"], *halos.left),
+                //                                          utils::applySlice(tensors["cells"], slice),
+                //                                          utils::applySlice(tensors["cells"], *halos.right),
+                //                                          utils::applySlice(tensors["cells"], *halos.bottomLeft),
+                //                                          utils::applySlice(tensors["cells"], *halos.bottom),
+                //                                          utils::applySlice(tensors["cells"], *halos.bottomRight));
+                //       auto cells_to_tmp = graph.addVertex(
+                //           cs1,
+                //           "LastHopeVertex",
+                //           {{"cells_oldVec", stitched.flatten()},
+                //            {"cells_newVec", utils::applySlice(tensors["tmp_cells"], slice).flatten()},
+                //            {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
+                //            {"av_vel", tensors["perWorkerPartialSums"][1]}});
+                //       graph.setInitialValue(cells_to_tmp["ny"], params->ny);
+                //       graph.setInitialValue(cells_to_tmp["nx"], params->nx/2);
+                //       graph.setInitialValue(cells_to_tmp["maxIters"], params->maxIters);
+                //       graph.setInitialValue(cells_to_tmp["omega"], params->omega);
+                //       graph.setInitialValue(cells_to_tmp["one_minus_omega"], 1.f - params->omega);
+                //       graph.setInitialValue(cells_to_tmp["density"], params->density);
+                //       graph.setInitialValue(cells_to_tmp["accel"], params->accel);
+                //       graph.setInitialValue(cells_to_tmp["total_free_cells"], numNonObstacleCells);
+                //       graph.setCycleEstimate(cells_to_tmp, 4);
+                //       graph.setTileMapping(cells_to_tmp, 61);
+                //   }
 
-        auto cs2 = graph.addComputeSet("tmp2cells");
+                  //// ------------------------------------ TMP2CELLS
+                  auto cs2 = graph.addComputeSet("tmp2cells");
+                  {
+                      auto slice = grids::Slice2D(grids::Range(0, params->ny), grids::Range(0, params->nx));
+                      auto halos = grids::Halos::forSliceWithWraparound(slice, size);
+                      grids::Halos::debugHalos(halos);
+                      auto stitched = utils::stitchHalos(utils::applySlice(tensors["tmp_cells"], *halos.topLeft),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.top),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.topRight),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.left),
+                                                         utils::applySlice(tensors["tmp_cells"], slice),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.right),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomLeft),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottom),
+                                                         utils::applySlice(tensors["tmp_cells"], *halos.bottomRight));
+                      auto tmp_to_cells = graph.addVertex(
+                          cs2,
+                          "LastHopeVertex",
+                          {{"cells_oldVec", stitched.flatten()},
+                           {"cells_newVec", utils::applySlice(tensors["cells"], slice).flatten()},
+                           {"obstaclesVec", utils::applySlice(tensors["obstacles"], slice).flatten()},
+                           {"av_vel", tensors["perWorkerPartialSums"][0]}});
+                      graph.setInitialValue(tmp_to_cells["ny"], params->ny);
+                      graph.setInitialValue(tmp_to_cells["nx"], params->nx);
+                      graph.setInitialValue(tmp_to_cells["maxIters"], params->maxIters);
+                      graph.setInitialValue(tmp_to_cells["omega"], params->omega);
+                      graph.setInitialValue(tmp_to_cells["one_minus_omega"], 1.f - params->omega);
+                      graph.setInitialValue(tmp_to_cells["density"], params->density);
+                      graph.setInitialValue(tmp_to_cells["accel"], params->accel);
+                      graph.setInitialValue(tmp_to_cells["total_free_cells"], numNonObstacleCells);
+                      graph.setCycleEstimate(tmp_to_cells, 4);
+                      graph.setTileMapping(tmp_to_cells, 1000);
+                  }
 
-        auto tmp_to_cells = graph.addVertex(
-            cs2,
-            "LastHopeVertex",
-            {
-                {"cells_oldVec", tensors["tmp_cells"].flatten()},
-                {"cells_newVec", tensors["cells"].flatten()},
-                {"obstaclesVec", tensors["obstacles"].flatten()},
-                {"av_vel", tensors["perWorkerPartialSums"][0]}
-            });
-        graph.setInitialValue(tmp_to_cells["ny"], params->ny);
-        graph.setInitialValue(tmp_to_cells["nx"], params->nx);
-        graph.setInitialValue(tmp_to_cells["maxIters"], params->maxIters);
-        graph.setInitialValue(tmp_to_cells["omega"], params->omega);
-        graph.setInitialValue(tmp_to_cells["one_minus_omega"], 1.f - params->omega);
-        graph.setInitialValue(tmp_to_cells["density"], params->density);
-        graph.setInitialValue(tmp_to_cells["accel"], params->accel);
-        graph.setInitialValue(tmp_to_cells["total_free_cells"], numNonObstacleCells);
-        graph.setCycleEstimate(tmp_to_cells, 4);
-        graph.setTileMapping(tmp_to_cells, 0);
-
-
-        auto prog = Sequence();
-         poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
+                  // --------- BUILD UP  PROGRAM
+                  auto prog = Sequence();
+                  poplar::setFloatingPointBehaviour(graph, prog, {true, true, true, false, true},
                                                     "no stochastic rounding");
-        auto avVelsNode = averageVelocity(graph, *params, tensors, workerGranularityMappings);
+                  auto avVelsNode = averageVelocity(graph, *params, tensors, workerGranularityMappings);
 
-        prog.add(Execute(firstAccelCs));
-        prog.add(Repeat(params->maxIters/2, Sequence(Execute(cs1),avVelsNode, Execute(cs2), avVelsNode)));
+                  prog.add(Execute(firstAccelCs));
+                  prog.add(Repeat(params->maxIters / 2, Sequence(Execute(cs1), avVelsNode, Execute(cs2), avVelsNode)));
 
-            //   accelerate_flow(graph, *params, tensors, numWorkersPerTile),
-            //   Repeat(params->maxIters / 2, Sequence{
-            //                          totalDensity(graph, *params, tensors),
-            //                          PrintTensor("totalDensity (before): ", tensors["totalDensity"]),
-            //                          PrintTensor("Obstacles: ", tensors["obstacles"]),
-            //                          PrintTensor("Cells (before): ", tensors["cells"]),
-            //   timestep(graph, *params, tensors, workerGranularityMappings,
-            //            numWorkersPerTile),
-            //                          PrintTensor("Cells: (after) ", tensors["cells"]),
+                  //   accelerate_flow(graph, *params, tensors, numWorkersPerTile),
+                  //   Repeat(params->maxIters / 2, Sequence{
+                  //                          totalDensity(graph, *params, tensors),
+                  //                          PrintTensor("totalDensity (before): ", tensors["totalDensity"]),
+                  //                          PrintTensor("Obstacles: ", tensors["obstacles"]),
+                  //                          PrintTensor("Cells (before): ", tensors["cells"]),
+                  //   timestep(graph, *params, tensors, workerGranularityMappings,
+                  //            numWorkersPerTile),
+                  //                          PrintTensor("Cells: (after) ", tensors["cells"]),
 
-            //                          totalDensity(graph, *params, tensors),
-            //                          PrintTensor("totalDensity (after): ", tensors["totalDensity"])
-        
-                 
+                  //                          totalDensity(graph, *params, tensors),
+                  //                          PrintTensor("totalDensity (after): ", tensors["totalDensity"])
 
                   auto copyCellsAndObstaclesToDevice = Sequence();
                   popops::zero(graph, tensors["av_vel"], copyCellsAndObstaclesToDevice, "av_vels=0");
@@ -580,139 +636,140 @@ auto main(int argc, char *argv[]) -> int
                                                    prog,
                                                    0, "timer");
 
-
                   graph.createHostRead("readTimer", timing, true);
                   programs.push_back(copyCellsAndObstaclesToDevice);
                   programs.push_back(prog);
                   programs.push_back(streamBackToHostProg);
 
                   if (auto dumpGraphVisualisations =
-                              std::getenv("DUMP_GRAPH_VIZ") != nullptr;  dumpGraphVisualisations) {
-        ofstream vertexGraph;
-        vertexGraph.open("vertexgraph.dot");
-        graph.outputVertexGraph(vertexGraph,
-                                programs);
-        vertexGraph.close();
+                          std::getenv("DUMP_GRAPH_VIZ") != nullptr;
+                      dumpGraphVisualisations)
+                  {
+                      ofstream vertexGraph;
+                      vertexGraph.open("vertexgraph.dot");
+                      graph.outputVertexGraph(vertexGraph,
+                                              programs);
+                      vertexGraph.close();
 
-        ofstream computeGraph;
-        computeGraph.open("computegraph.dot");
-        graph.outputComputeGraph(computeGraph,
-                                 programs);
-        computeGraph.close();
+                      ofstream computeGraph;
+                      computeGraph.open("computegraph.dot");
+                      graph.outputComputeGraph(computeGraph,
+                                               programs);
+                      computeGraph.close();
                   }
-});
+              });
 
-timedStep("Serializing graph for analysis", [&]() -> void {
-    serializeGraph(graph);
-});
+    timedStep("Serializing graph for analysis", [&]() -> void {
+        serializeGraph(graph);
+    });
 
-double total_compute_time = 0.0;
-auto cells = lbm::Cells(params->nx, params->ny);
-cells.initialise(*params);
-std::cout << "HOST total density: " << cells.totalDensity() << std::endl;
+    double total_compute_time = 0.0;
+    auto cells = lbm::Cells(params->nx, params->ny);
+    cells.initialise(*params);
+    std::cout << "HOST total density: " << cells.totalDensity() << std::endl;
 
-auto av_vels = std::vector<float>(params->maxIters, 0.0f);
+    auto av_vels = std::vector<float>(params->maxIters, 0.0f);
 
-auto engine = Engine(graph, programs,
-                     debug ? utils::POPLAR_ENGINE_OPTIONS_DEBUG : utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
+    auto engine = Engine(graph, programs,
+                         debug ? utils::POPLAR_ENGINE_OPTIONS_DEBUG : utils::POPLAR_ENGINE_OPTIONS_NODEBUG);
 
-engine.connectStream("<<av_vel", av_vels.data());
-engine.connectStream("<<cells", cells.data.data());
-engine.connectStream(">>cells", cells.data.data());
-engine.connectStream(">>obstacles", obstacles->getData());
+    engine.connectStream("<<av_vel", av_vels.data());
+    engine.connectStream("<<cells", cells.data.data());
+    engine.connectStream(">>cells", cells.data.data());
+    engine.connectStream(">>obstacles", obstacles->getData());
 
-utils::timedStep("Loading graph to device", [&]() {
-    engine.load(*device);
-});
+    utils::timedStep("Loading graph to device", [&]() {
+        engine.load(*device);
+    });
 
-utils::timedStep("Running copy to device step", [&]() {
-    engine.run(0);
-});
+    utils::timedStep("Running copy to device step", [&]() {
+        engine.run(0);
+    });
 
-total_compute_time += utils::timedStep("Running LBM", [&]() {
-    engine.run(1);
-});
+    total_compute_time += utils::timedStep("Running LBM", [&]() {
+        engine.run(1);
+    });
 
-utils::timedStep("Running copy to host step", [&]() {
-    engine.run(2);
-});
+    utils::timedStep("Running copy to host step", [&]() {
+        engine.run(2);
+    });
 
-//    for (auto jj = 0u; jj < params->ny; jj++) {
-//        for (auto ii = 0u; ii < params->nx; ii++) {
-//            for (auto kk = 0u; kk < 9; kk++) {
-//                printf("%.9f ", cells.data[9 * (ii + jj * params->nx) + kk]);
-//            }
-//            printf("\n");
-//        }
-//        printf("\n");
-//    }
+    //    for (auto jj = 0u; jj < params->ny; jj++) {
+    //        for (auto ii = 0u; ii < params->nx; ii++) {
+    //            for (auto kk = 0u; kk < 9; kk++) {
+    //                printf("%.9f ", cells.data[9 * (ii + jj * params->nx) + kk]);
+    //            }
+    //            printf("\n");
+    //        }
+    //        printf("\n");
+    //    }
 
-int numErrs = 0;
-for (auto jj = 0u; jj < params->ny; jj++)
-{
-    for (auto ii = 0u; ii < params->nx; ii++)
+    int numErrs = 0;
+    for (auto jj = 0u; jj < params->ny; jj++)
     {
-        for (auto k = 0u; k < 9; k++)
+        for (auto ii = 0u; ii < params->nx; ii++)
         {
-            if (std::isnan(cells.data[9 * (ii + jj * params->nx) + k]))
+            for (auto k = 0u; k < 9; k++)
             {
-                if (numErrs < 100)
+                if (std::isnan(cells.data[9 * (ii + jj * params->nx) + k]))
                 {
-                    printf("%d %d %d is %.12E\n", jj, ii, k, cells.data[9 * (ii + jj * params->nx) + k]);
+                    if (numErrs < 100)
+                    {
+                        printf("%d %d %d is %.12E\n", jj, ii, k, cells.data[9 * (ii + jj * params->nx) + k]);
+                    }
+                    numErrs++;
                 }
-                numErrs++;
             }
         }
     }
-}
-printf("%d Errors\n", numErrs);
+    printf("%d Errors\n", numErrs);
 
-utils::timedStep("Writing output files ", [&]() {
-    // for (auto i = 0u; i < av_vels.size(); i++)
-    // {
-    //     //            std::cout << av_vels[i] << std::endl;
-    //     av_vels[i] = av_vels[i] / numNonObstacleCells;
-    // }
-    lbm::writeAverageVelocities("av_vels.dat", av_vels);
-    lbm::writeResults("final_state.dat", *params, *obstacles, cells);
-});
-
-if (debug)
-{
-    utils::timedStep("Capturing profiling info", [&]() {
-        utils::captureProfileInfo(engine);
+    utils::timedStep("Writing output files ", [&]() {
+        // for (auto i = 0u; i < av_vels.size(); i++)
+        // {
+        //     //            std::cout << av_vels[i] << std::endl;
+        //     av_vels[i] = av_vels[i] / numNonObstacleCells;
+        // }
+        lbm::writeAverageVelocities("av_vels.dat", av_vels);
+        lbm::writeResults("final_state.dat", *params, *obstacles, cells);
     });
 
-    engine.printProfileSummary(std::cout,
-                               OptionFlags{{"showExecutionSteps", "false"}});
-}
+    if (debug)
+    {
+        utils::timedStep("Capturing profiling info", [&]() {
+            utils::captureProfileInfo(engine);
+        });
 
-std::cout << "==done==" << std::endl;
-std::cout << "Total compute time was \t" << std::right << std::setw(12) << std::setprecision(5)
-          << total_compute_time
-          << "s" << std::endl;
+        engine.printProfileSummary(std::cout,
+                                   OptionFlags{{"showExecutionSteps", "false"}});
+    }
 
-std::cout << "Reynolds number:  \t" << std::right << std::setw(12) << std::setprecision(12)
-          << std::scientific
-          << lbm::reynoldsNumber(*params, av_vels[params->maxIters - 1]) << std::endl;
+    std::cout << "==done==" << std::endl;
+    std::cout << "Total compute time was \t" << std::right << std::setw(12) << std::setprecision(5)
+              << total_compute_time
+              << "s" << std::endl;
 
-std::cout << "HOST total density: " << cells.totalDensity() << std::endl;
+    std::cout << "Reynolds number:  \t" << std::right << std::setw(12) << std::setprecision(12)
+              << std::scientific
+              << lbm::reynoldsNumber(*params, av_vels[params->maxIters - 1]) << std::endl;
 
-cout << "Now doing 5 runs and averaging IPU-reported timing:" << std::endl;
-unsigned long ipuTimer;
-double clockCycles = 0.;
-for (auto run = 0u; run < 5u; run++)
-{
-    engine.run(2);
-    engine.readTensor("readTimer", &ipuTimer);
-    clockCycles += ipuTimer;
-}
-double clockFreq = device->getTarget().getTileClockFrequency();
-std::cout << "IPU reports " << std::fixed << clockFreq * 1e-6 << "MHz clock frequency" << std::endl;
-std::cout << "Average IPU timing for program is: " << std::fixed << std::setprecision(5) << std::setw(12)
-          << clockCycles / 5.0 / clockFreq << "s" << std::endl;
+    std::cout << "HOST total density: " << cells.totalDensity() << std::endl;
 
-std::cout << "==done==" << std::endl;
+    cout << "Now doing 5 runs and averaging IPU-reported timing:" << std::endl;
+    unsigned long ipuTimer;
+    double clockCycles = 0.;
+    for (auto run = 0u; run < 5u; run++)
+    {
+        engine.run(2);
+        engine.readTensor("readTimer", &ipuTimer);
+        clockCycles += ipuTimer;
+    }
+    double clockFreq = device->getTarget().getTileClockFrequency();
+    std::cout << "IPU reports " << std::fixed << clockFreq * 1e-6 << "MHz clock frequency" << std::endl;
+    std::cout << "Average IPU timing for program is: " << std::fixed << std::setprecision(5) << std::setw(12)
+              << clockCycles / 5.0 / clockFreq << "s" << std::endl;
 
-return EXIT_SUCCESS;
+    std::cout << "==done==" << std::endl;
+
+    return EXIT_SUCCESS;
 }
