@@ -542,6 +542,8 @@ struct Params {
     float one_minus_omega;
     float density;
     float accel;
+    int rowToAccelerate;
+    bool isAccelerate;
     int total_free_cells;
 };
 
@@ -588,7 +590,7 @@ auto nuevo(const Params &params, const Cell *cells_old, Cell *cells_new, const b
         {
             const int y_n = (jj + 1) % params.ny;
             const int y_s = (jj == 0) ? (jj + params.ny - 1) : (jj - 1);
-            const float accel = (jj == params.ny - 2) ? 1.00f : 0.00f;
+            const float accel = jj == params.rowToAccelerate && params.isAccelerate ? 1.f : 0.f;
             const int x_e = (ii + 1) % params.nx;
             const int x_w = (ii == 0) ? (ii + params.nx - 1) : (ii - 1);
             const int is_obstacle = obstacles[NEW_OFFSET(0, 0)];
@@ -707,6 +709,8 @@ public:
             .one_minus_omega = 0,
             .density = density,
             .accel = accel,
+            .isAccelerate = true,
+            .rowToAccelerate = 0,
             .total_free_cells = 0};
 
         firstAccel(params, obstacles, cells);
@@ -732,6 +736,8 @@ public:
     float accel;
     float iter;
     int total_free_cells;
+    bool isAccelerate;
+    int rowToAccelerate;
 
     bool compute() {
         auto cells_old = reinterpret_cast<Cell *>(&cells_oldVec[0]);
@@ -746,6 +752,8 @@ public:
             .one_minus_omega = one_minus_omega,
             .density = density,
             .accel = accel,
+            .isAccelerate = isAccelerate,
+            .rowToAccelerate = rowToAccelerate,
             .total_free_cells = total_free_cells
         };
 
