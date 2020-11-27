@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
              cxxopts::value<unsigned>(minRowsPerTile)->default_value(std::to_string(grids::DefaultMinRowsPerTile)))
             ("min-cols-per-tile", "Min cols per tile (default 6)",
              cxxopts::value<unsigned>(minColsPerTile)->default_value(std::to_string(grids::DefaultMinColsPerTile)))
-            ("data-type", "Data type (float, float2, half4)",
+            ("data-type", "Data type (float, float2, half, half4)",
              cxxopts::value<string>(dataType)->default_value("float"))
             ("o,output", "filename output (blurred image)", cxxopts::value<std::string>(outputFilename))
             ("d,debug", "Run in debug mode (capture profiling information)")
